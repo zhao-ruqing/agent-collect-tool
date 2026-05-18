@@ -1,0 +1,14 @@
+/target
+/data
+Cargo.lock
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Local config
+config.toml
+!config.toml.example

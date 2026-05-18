@@ -1,0 +1,22 @@
+[package]
+name = "agent"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+thiserror = "1.0"
+log = "0.4"
+env_logger = "0.11"
+reqwest = { version = "0.12", features = ["json", "gzip"] }
+sled = "0.34"
+notify = "6.1"
+sysinfo = "0.30"
+windows-service = "0.7"
+toml = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.7", features = ["v4", "serde"] }
+sha2 = "0.10"
