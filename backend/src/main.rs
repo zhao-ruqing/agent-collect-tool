@@ -4,6 +4,8 @@ mod error;
 mod handler;
 mod model;
 mod router;
+mod service;
+mod store;
 
 use crate::config::BackendConfig;
 use std::net::SocketAddr;

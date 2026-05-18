@@ -1,4 +1,6 @@
+mod collector;
 mod config;
+mod engine;
 mod service;
 mod util;
 

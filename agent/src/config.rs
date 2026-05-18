@@ -11,7 +11,14 @@ pub struct AgentConfig {
     pub report_interval_secs: u64,
     pub log_level: String,
     pub data_dir: String,
+    /// 要采集的工具列表: ["claude-code", "trae"]
+    #[serde(default = "default_tools")]
+    pub tools: Vec<String>,
     pub claude_history_path: Option<String>,
+}
+
+fn default_tools() -> Vec<String> {
+    vec!["claude-code".to_string()]
 }
 
 impl AgentConfig {
