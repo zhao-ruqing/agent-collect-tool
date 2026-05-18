@@ -1,5 +1,10 @@
 -- 001_init.sql
 
+-- Create Database
+CREATE DATABASE IF NOT EXISTS agent_collect_tool DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+USE agent_collect_tool;
+
 -- Agents Table
 CREATE TABLE IF NOT EXISTS agents (
     id VARCHAR(64) PRIMARY KEY,
