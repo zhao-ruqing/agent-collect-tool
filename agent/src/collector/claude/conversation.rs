@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};

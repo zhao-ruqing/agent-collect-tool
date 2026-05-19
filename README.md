@@ -67,12 +67,6 @@ Vue3 管理后台
 ## 快速启动
 
 ```bash
-# 数据库
-docker run -d --name mysql-collect -p 3306:3306 \
-  -e MYSQL_ROOT_PASSWORD=root \
-  -e MYSQL_DATABASE=agent_collect \
-  mysql:8.0
-
 # 后端
 cd backend && sqlx migrate run && cargo run
 

@@ -4,14 +4,14 @@ use std::time::Duration;
 use windows_service::{
     define_windows_service,
     service::{
-        ServiceControl, ServiceControlHandlerResult, ServiceStatus, ServiceType,
+        ServiceControl, ServiceExitCode, ServiceStatus, ServiceType,
+        ServiceState, ServiceControlAccept,
     },
-    service_control_handler::{self, ServiceControlHandlerEvents},
+    service_control_handler::{self, ServiceControlHandlerResult},
     service_dispatcher,
 };
 
 const SERVICE_NAME: &str = "AgentCollectTool";
-const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 
 define_windows_service!(ffi_service_main, system_service_main);
 
@@ -20,8 +20,8 @@ pub fn run_service() -> Result<(), windows_service::Error> {
 }
 
 fn system_service_main(_arguments: Vec<OsString>) {
-    if let Err(_e) = run_app() {
-        // Handle error, maybe log it
+    if let Err(e) = run_app() {
+        log::error!("服务运行失败: {}", e);
     }
 }
 
@@ -42,31 +42,28 @@ fn run_app() -> Result<(), anyhow::Error> {
     let status_handle = service_control_handler::register(SERVICE_NAME, event_handler)?;
 
     status_handle.set_service_status(ServiceStatus {
-        service_type: SERVICE_TYPE,
-        current_state: windows_service::service::ServiceState::Running,
-        controls_accepted: windows_service::service::ServiceControlAccept::STOP,
-        exit_code: 0,
+        service_type: ServiceType::OWN_PROCESS,
+        current_state: ServiceState::Running,
+        controls_accepted: ServiceControlAccept::STOP,
+        exit_code: ServiceExitCode::Win32(0),
         checkpoint: 0,
         wait_hint: Duration::default(),
         process_id: None,
     })?;
 
-    // Main loop
+    // 主循环
     loop {
-        // Check for shutdown signal
         if shutdown_rx.try_recv().is_ok() {
             break;
         }
-
-        // TODO: Perform agent tasks here
         std::thread::sleep(Duration::from_secs(1));
     }
 
     status_handle.set_service_status(ServiceStatus {
-        service_type: SERVICE_TYPE,
-        current_state: windows_service::service::ServiceState::Stopped,
-        controls_accepted: windows_service::service::ServiceControlAccept::empty(),
-        exit_code: 0,
+        service_type: ServiceType::OWN_PROCESS,
+        current_state: ServiceState::Stopped,
+        controls_accepted: ServiceControlAccept::empty(),
+        exit_code: ServiceExitCode::Win32(0),
         checkpoint: 0,
         wait_hint: Duration::default(),
         process_id: None,
