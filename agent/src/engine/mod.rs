@@ -1,11 +1,13 @@
 pub mod dedup;
 pub mod aggregator;
 
-use anyhow::Result;
-use crate::collector::Collector;
+use anyhow::{Context, Result};
+use crate::collector::{Collector, RawEvent};
 use crate::reporter::Reporter;
+use crate::reporter::queue::LocalQueue;
 use dedup::DedupFilter;
 use aggregator::EventAggregator;
+use std::path::PathBuf;
 
 /// 采集引擎：管理所有 Collector 实例，编排采集→去重→聚合→缓冲→上报流程
 pub struct Engine {
@@ -13,6 +15,7 @@ pub struct Engine {
     dedup: DedupFilter,
     aggregator: EventAggregator,
     reporter: Box<dyn Reporter>,
+    queue: LocalQueue,
     config: EngineConfig,
 }
 
@@ -26,14 +29,19 @@ pub struct EngineConfig {
 }
 
 impl Engine {
-    pub fn new(config: EngineConfig, reporter: Box<dyn Reporter>) -> Self {
-        Self {
+    pub fn new(config: EngineConfig, reporter: Box<dyn Reporter>, queue_path: PathBuf) -> Result<Self> {
+        let queue = LocalQueue::open(&queue_path, 10000)
+            .with_context(|| format!("打开本地缓冲队列失败: {:?}", queue_path))?;
+        log::info!("本地缓冲队列已打开: {:?}, 当前 {} 条待发送", queue_path, queue.len());
+
+        Ok(Self {
             collectors: Vec::new(),
             dedup: DedupFilter::new(2000),
             aggregator: EventAggregator::new(),
             reporter,
+            queue,
             config,
-        }
+        })
     }
 
     /// 注册一个采集器
@@ -45,13 +53,13 @@ impl Engine {
     /// 运行采集主循环
     pub async fn run(&mut self) -> Result<()> {
         log::info!(
-            "引擎启动，已注册 {} 个采集器，采集间隔 {}s，上报间隔 {}s",
+            "引擎启动，已注册 {} 个采集器，采集间隔 {}s，上报间隔 {}s，队列积压 {} 条",
             self.collectors.len(),
             self.config.collect_interval_secs,
             self.config.report_interval_secs,
+            self.queue.len(),
         );
 
-        // 每隔 config.report_interval_secs 上报一次
         let mut last_report = tokio::time::Instant::now();
 
         loop {
@@ -94,23 +102,21 @@ impl Engine {
                 for event in unique_events {
                     self.aggregator.push(event);
                 }
-            }
 
-            // 4. 上报：到了上报间隔或没有数据需要采集时
-            if last_report.elapsed().as_secs() >= self.config.report_interval_secs {
-                let batched_events = self.aggregator.flush_all();
-                if !batched_events.is_empty() {
-                    log::info!("准备上报 {} 条事件", batched_events.len());
-                    match self.reporter.report(batched_events).await {
-                        Ok(count) => {
-                            log::info!("上报成功: {} 条", count);
-                        }
-                        Err(e) => {
-                            log::error!("上报失败: {}", e);
-                            // 上报失败的事件会由 Reporter 内部的队列保留
-                        }
+                // 4. 刷新聚合结果并写入本地缓冲队列
+                let batched = self.aggregator.flush_all();
+                if !batched.is_empty() {
+                    let batch_count = batched.len();
+                    match self.push_to_queue(batched) {
+                        Ok(_) => log::debug!("写入队列 {} 条事件", batch_count),
+                        Err(e) => log::error!("写入队列失败: {}", e),
                     }
                 }
+            }
+
+            // 5. 上报：到上报间隔时从队列取出并发送
+            if last_report.elapsed().as_secs() >= self.config.report_interval_secs {
+                self.flush_queue().await;
                 last_report = tokio::time::Instant::now();
             }
 
@@ -123,16 +129,83 @@ impl Engine {
         }
     }
 
-    /// 优雅关闭：刷新缓冲区并上报
-    pub async fn shutdown(&mut self) -> Result<()> {
-        log::info!("引擎关闭中，刷新缓冲区...");
-        let remaining = self.aggregator.flush_all();
-        if !remaining.is_empty() {
-            log::info!("关闭前上报 {} 条剩余事件", remaining.len());
-            if let Err(e) = self.reporter.report(remaining).await {
-                log::error!("关闭前上报失败: {}", e);
+    /// 将事件序列化并推入本地缓冲队列
+    fn push_to_queue(&mut self, events: Vec<RawEvent>) -> Result<()> {
+        let payloads: Vec<Vec<u8>> = events
+            .iter()
+            .map(|e| serde_json::to_vec(e).unwrap_or_default())
+            .filter(|p| !p.is_empty())
+            .collect();
+
+        if !payloads.is_empty() {
+            self.queue.push_batch(payloads)?;
+        }
+        Ok(())
+    }
+
+    /// 从队列取出事件并上报
+    async fn flush_queue(&mut self) {
+        if self.queue.is_empty() {
+            return;
+        }
+
+        let queue_len = self.queue.len();
+        log::info!("队列中 {} 条事件待上报", queue_len);
+
+        // 每次最多取 500 条
+        match self.queue.pop_batch(500) {
+            Ok(entries) => {
+                if entries.is_empty() {
+                    return;
+                }
+
+                // 反序列化回 RawEvent
+                let events: Vec<RawEvent> = entries
+                    .iter()
+                    .filter_map(|e| serde_json::from_slice(&e.payload).ok())
+                    .collect();
+
+                let max_seq = entries.last().map(|e| e.seq).unwrap_or(0);
+                let event_count = events.len();
+
+                match self.reporter.report(events).await {
+                    Ok(_) => {
+                        // 上报成功，清除已发送的条目
+                        if let Err(e) = self.queue.clear_sent(max_seq) {
+                            log::error!("清除队列已发送条目失败: {}", e);
+                        } else {
+                            log::info!("上报成功 {} 条，队列剩余 {}", event_count, self.queue.len());
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("上报失败: {}，事件保留在队列中", e);
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("从队列读取失败: {}", e);
             }
         }
+    }
+
+    /// 优雅关闭：刷新聚合缓冲区和队列
+    pub async fn shutdown(&mut self) -> Result<()> {
+        log::info!("引擎关闭中，刷新缓冲区...");
+
+        // 刷新聚合器中的剩余事件
+        let remaining = self.aggregator.flush_all();
+        if !remaining.is_empty() {
+            if let Err(e) = self.push_to_queue(remaining) {
+                log::error!("关闭时写入队列失败: {}", e);
+            }
+        }
+
+        // 尝试上报队列中的所有事件
+        while !self.queue.is_empty() {
+            self.flush_queue().await;
+        }
+
+        log::info!("引擎已关闭");
         Ok(())
     }
 }

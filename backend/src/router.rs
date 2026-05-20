@@ -14,9 +14,16 @@ pub fn create_router(pool: MySqlPool) -> Router {
     let state = Arc::new(AppState { pool });
 
     Router::new()
+        // 采集接口
         .route("/api/v1/collect", post(collect::collect_data))
+        // Agent 接口
         .route("/api/v1/agent/register", post(agent::register_agent))
         .route("/api/v1/agent/config", get(agent::get_agent_config))
+        // 管理端接口
         .route("/api/v1/admin/dashboard", get(admin::get_dashboard_stats))
+        .route("/api/v1/admin/conversations", get(admin::list_conversations))
+        .route("/api/v1/admin/edits", get(admin::list_code_edits))
+        .route("/api/v1/admin/events", get(admin::list_action_events))
+        .route("/api/v1/admin/daily-stats", get(admin::get_daily_stats))
         .with_state(state)
 }

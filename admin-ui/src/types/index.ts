@@ -60,6 +60,11 @@ export interface DailyStat {
   total_edits: number
 }
 
+export interface DailyTrendItem {
+  date: string
+  count: number
+}
+
 // ============================================================
 // API 响应类型
 // ============================================================
@@ -67,21 +72,22 @@ export interface DailyStat {
 export interface DashboardStats {
   total_agents: number
   total_sessions: number
-  total_messages?: number
-  total_tokens?: number
-  acceptance_rate?: number
-  daily_stats?: DailyStat[]
+  today_sessions: number
+  total_messages: number
+  total_edits: number
+  recent_sessions: Session[]
+  daily_trend: DailyTrendItem[]
 }
 
-export interface PaginatedResponse<T> {
-  data: T[]
+export interface PaginatedList<T> {
+  list: T[]
   total: number
   page: number
   page_size: number
 }
 
 export interface ApiResponse<T> {
-  status: string
-  data?: T
-  error?: string
+  code: number
+  data: T
+  message?: string
 }

@@ -30,18 +30,22 @@ impl LocalQueue {
 
         // 恢复 next_seq：遍历现有 key 找最大值
         let mut max_key: u64 = 0;
+        let mut found = false;
         for item in db.iter() {
             let (key, _) = item.with_context(|| "读取 sled 条目失败")?;
             if let Ok(seq) = key_to_seq(&key) {
                 if seq > max_key {
                     max_key = seq;
                 }
+                found = true;
             }
         }
 
+        let next_seq = if found { max_key + 1 } else { 0 };
+
         Ok(Self {
             db,
-            next_seq: max_key + 1,
+            next_seq,
             max_items,
         })
     }

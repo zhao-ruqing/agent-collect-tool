@@ -1,7 +1,7 @@
-use sha2::{Digest, Sha256};
 use sqlx::MySqlPool;
 use tracing;
 
+use crate::desensitize;
 use crate::store;
 
 /// 上报事件（来自 Agent 上报）
@@ -138,7 +138,7 @@ pub async fn process_batch(pool: &MySqlPool, payload: &CollectionPayload) -> Res
 async fn process_session(pool: &MySqlPool, agent_id: &str, sess: &SessionPayload) -> Result<(), crate::error::AppError> {
     let started_at = chrono::DateTime::parse_from_rfc3339(&sess.started_at)
         .map(|dt| dt.with_timezone(&chrono::Utc))
-        .map_err(|_| crate::error::AppError::BadRequest("无效的 started_at 格式".to_string())))?;
+        .map_err(|_| crate::error::AppError::BadRequest("无效的 started_at 格式".to_string()))?;
 
     let ended_at = sess
         .ended_at
@@ -149,7 +149,7 @@ async fn process_session(pool: &MySqlPool, agent_id: &str, sess: &SessionPayload
     let project_path_hash = sess
         .cwd
         .as_deref()
-        .map(|p| hash_str(p))
+        .map(|p| desensitize::content::desensitize_content(p).0)
         .unwrap_or_default();
 
     store::session::upsert(
@@ -169,7 +169,7 @@ async fn process_session(pool: &MySqlPool, agent_id: &str, sess: &SessionPayload
 async fn process_conversation(pool: &MySqlPool, agent_id: &str, conv: &ConversationPayload) -> Result<(), crate::error::AppError> {
     let started_at = chrono::DateTime::parse_from_rfc3339(&conv.started_at)
         .map(|dt| dt.with_timezone(&chrono::Utc))
-        .map_err(|_| crate::error::AppError::BadRequest("无效的 started_at 格式".to_string())))?;
+        .map_err(|_| crate::error::AppError::BadRequest("无效的 started_at 格式".to_string()))?;
 
     let ended_at = conv
         .ended_at
@@ -183,7 +183,7 @@ async fn process_conversation(pool: &MySqlPool, agent_id: &str, conv: &Conversat
         .unwrap_or_else(|| {
             conv.project_path
                 .as_deref()
-                .map(|p| hash_str(p))
+                .map(|p| desensitize::content::desensitize_content(p).0)
                 .unwrap_or_default()
         });
 
@@ -204,7 +204,7 @@ async fn process_conversation(pool: &MySqlPool, agent_id: &str, conv: &Conversat
         .messages
         .iter()
         .map(|m| {
-            let content_hash = hash_str(&m.content);
+            let (content_hash, _summary) = desensitize::content::desensitize_content(&m.content);
             (
                 conv.session_id.clone(),
                 m.role.clone(),
@@ -222,10 +222,15 @@ async fn process_conversation(pool: &MySqlPool, agent_id: &str, conv: &Conversat
 }
 
 async fn process_code_edit(pool: &MySqlPool, edit: &CodeEditPayload) -> Result<(), crate::error::AppError> {
-    let file_path_hash = hash_str(&edit.file_path);
+    // 文件路径脱敏后哈希
+    let desensitized_path = desensitize::path::desensitize_path(&edit.file_path);
+    let file_path_hash = desensitize::content::desensitize_content(&desensitized_path).0;
 
-    // diff 脱敏：截断为骨架
-    let diff_skeleton = edit.diff_content.as_deref().map(truncate_diff);
+    // diff 脱敏：骨架化替换字面量
+    let diff_skeleton = edit
+        .diff_content
+        .as_deref()
+        .map(desensitize::diff::skeletonize_diff);
 
     store::code_edit::insert(
         pool,
@@ -253,30 +258,4 @@ async fn process_action(pool: &MySqlPool, action: &ActionPayload) -> Result<(), 
     .await?;
 
     Ok(())
-}
-
-/// SHA256 哈希
-fn hash_str(s: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(s.as_bytes());
-    format!("{:x}", hasher.finalize())
-}
-
-/// Diff 骨架化：只保留结构，去掉具体值
-fn truncate_diff(diff: &str) -> String {
-    // 提取每行的 +/- 操作符和缩进，但去掉具体内容
-    diff.lines()
-        .map(|line| {
-            if line.starts_with('+') || line.starts_with('-') {
-                // 保留操作符和缩进级别
-                let trimmed = line.trim_start_matches(['+', '-', ' ']);
-                let indent = line.len() - trimmed.len();
-                let op = if line.starts_with('+') { '+' } else { '-' };
-                format!("{}{}", op, " ".repeat(indent.saturating_sub(1)))
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }

@@ -7,6 +7,6 @@ pub async fn create_pool(database_url: &str) -> Result<MySqlPool> {
         .max_connections(5)
         .connect(database_url)
         .await?;
-    
+
     Ok(pool)
 }

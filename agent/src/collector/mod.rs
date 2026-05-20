@@ -61,7 +61,7 @@ impl std::fmt::Display for ToolType {
 // 原始事件枚举
 // ============================================================
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event_type", rename_all = "snake_case")]
 pub enum RawEvent {
     /// 对话记录

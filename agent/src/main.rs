@@ -6,20 +6,20 @@ mod service;
 mod util;
 
 use std::env;
-use anyhow::Result;
+use std::process::Command;
+use anyhow::{Context, Result};
 use crate::config::AgentConfig;
 use crate::engine::{Engine, EngineConfig};
 use crate::reporter::http::{HttpReporter, HttpReporterConfig};
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // 初始化日志
-    env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
+const SERVICE_NAME: &str = "AgentCollectTool";
 
+fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
+
+    // 无参数或由 SCM 启动时，作为 Windows 服务运行
     if args.len() < 2 {
-        print_usage();
-        return Ok(());
+        return service::run_service().map_err(|e| anyhow::anyhow!("服务运行失败: {}", e));
     }
 
     let command = args[1].as_str();
@@ -29,7 +29,10 @@ async fn main() -> Result<()> {
         "start" => start_service()?,
         "stop" => stop_service()?,
         "status" => status_service()?,
-        "run" => run_foreground().await?,
+        "run" => {
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(run_foreground())?;
+        }
         _ => {
             eprintln!("未知命令: {}", command);
             print_usage();
@@ -50,38 +53,132 @@ fn print_usage() {
     println!("  run       - 前台调试模式");
 }
 
+/// 获取当前可执行文件的完整路径
+fn exe_path() -> Result<String> {
+    let path = env::current_exe()
+        .with_context(|| "无法获取当前可执行文件路径")?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// 安装 Windows 服务
 fn install_service() -> Result<()> {
-    println!("安装服务...");
-    // TODO: 使用 windows-service 实现实际服务安装
-    println!("服务安装成功 (mock)");
+    println!("正在注册 Windows 服务: {}...", SERVICE_NAME);
+    let exe = exe_path()?;
+
+    let output = Command::new("sc.exe")
+        .args([
+            "create",
+            SERVICE_NAME,
+            "binPath=",
+            &exe,
+            "start=",
+            "auto",
+            "DisplayName=",
+            "Agent Collect Tool",
+        ])
+        .output()
+        .with_context(|| "执行 sc.exe create 失败，请确保以管理员权限运行")?;
+
+    if output.status.success() {
+        println!("服务注册成功!");
+        println!("  sc start {}   # 启动服务", SERVICE_NAME);
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("already exists") || stderr.contains("已存在") {
+            println!("服务已存在，无需重复注册");
+        } else {
+            eprintln!("服务注册失败: {}", stderr.trim());
+        }
+    }
     Ok(())
 }
 
+/// 卸载 Windows 服务
 fn uninstall_service() -> Result<()> {
-    println!("移除服务...");
-    println!("服务移除成功 (mock)");
+    println!("正在移除 Windows 服务: {}...", SERVICE_NAME);
+
+    // 先停止服务
+    let _ = Command::new("sc.exe")
+        .args(["stop", SERVICE_NAME])
+        .output();
+
+    let output = Command::new("sc.exe")
+        .args(["delete", SERVICE_NAME])
+        .output()
+        .with_context(|| "执行 sc.exe delete 失败，请确保以管理员权限运行")?;
+
+    if output.status.success() {
+        println!("服务移除成功!");
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("not exist") || stderr.contains("不存在") {
+            println!("服务不存在，无需移除");
+        } else {
+            eprintln!("服务移除失败: {}", stderr.trim());
+        }
+    }
     Ok(())
 }
 
+/// 启动 Windows 服务
 fn start_service() -> Result<()> {
-    println!("启动服务...");
-    println!("服务已启动 (mock)");
+    println!("正在启动服务: {}...", SERVICE_NAME);
+
+    let output = Command::new("sc.exe")
+        .args(["start", SERVICE_NAME])
+        .output()
+        .with_context(|| "执行 sc.exe start 失败，请确保以管理员权限运行")?;
+
+    if output.status.success() {
+        println!("服务已启动!");
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("already running") || stderr.contains("已运行") || stderr.contains("1056") {
+            println!("服务已在运行中");
+        } else {
+            eprintln!("服务启动失败: {}", stderr.trim());
+        }
+    }
     Ok(())
 }
 
+/// 停止 Windows 服务
 fn stop_service() -> Result<()> {
-    println!("停止服务...");
-    println!("服务已停止 (mock)");
+    println!("正在停止服务: {}...", SERVICE_NAME);
+
+    let output = Command::new("sc.exe")
+        .args(["stop", SERVICE_NAME])
+        .output()
+        .with_context(|| "执行 sc.exe stop 失败，请确保以管理员权限运行")?;
+
+    if output.status.success() {
+        println!("服务已停止!");
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("not running") || stderr.contains("未运行") || stderr.contains("1062") {
+            println!("服务未在运行");
+        } else {
+            eprintln!("服务停止失败: {}", stderr.trim());
+        }
+    }
     Ok(())
 }
 
+/// 查询服务状态
 fn status_service() -> Result<()> {
-    println!("检查服务状态...");
-    println!("服务状态: 运行中 (mock)");
+    let output = Command::new("sc.exe")
+        .args(["query", SERVICE_NAME])
+        .output()
+        .with_context(|| "执行 sc.exe query 失败")?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    println!("{}", stdout);
     Ok(())
 }
 
+/// 前台调试模式：直接运行引擎，不注册为服务
 async fn run_foreground() -> Result<()> {
+    env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
     log::info!("Agent 前台模式启动...");
 
     let config = AgentConfig::load()?;
@@ -103,7 +200,12 @@ async fn run_foreground() -> Result<()> {
         server_url: config.server_url.clone(),
         agent_id: config.agent_id.clone(),
     };
-    let mut engine = Engine::new(engine_config, Box::new(http_reporter));
+
+    // 本地缓冲队列路径
+    let queue_path = std::path::PathBuf::from(&config.data_dir).join("queue");
+    std::fs::create_dir_all(&queue_path)?;
+
+    let mut engine = Engine::new(engine_config, Box::new(http_reporter), queue_path)?;
 
     // 注册采集器
     if config.tools.iter().any(|t| t == "claude-code" || t == "claude") {

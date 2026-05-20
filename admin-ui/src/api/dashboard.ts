@@ -1,13 +1,18 @@
 import client from './client'
-import type { DashboardStats } from '../types'
+import type { ApiResponse, DashboardStats, PaginatedList, DailyStat } from '../types'
 
-export function fetchDashboardStats(): Promise<{ data: DashboardStats }> {
-  return client.get('/admin/dashboard')
+export async function fetchDashboardStats(): Promise<DashboardStats> {
+  const res = await client.get<ApiResponse<DashboardStats>>('/admin/dashboard')
+  return res.data.data
 }
 
-export function fetchDailyStats(params?: {
-  start_date?: string
-  end_date?: string
-}): Promise<{ data: { daily_stats: Array<Record<string, unknown>> } }> {
-  return client.get('/admin/daily-stats', { params })
+export async function fetchDailyStats(params?: {
+  page?: number
+  page_size?: number
+  agent_id?: string
+  date_from?: string
+  date_to?: string
+}): Promise<PaginatedList<DailyStat>> {
+  const res = await client.get<ApiResponse<PaginatedList<DailyStat>>>('/admin/daily-stats', { params })
+  return res.data.data
 }

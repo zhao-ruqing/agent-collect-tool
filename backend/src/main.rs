@@ -1,5 +1,6 @@
 mod config;
 mod db;
+mod desensitize;
 mod error;
 mod handler;
 mod model;
