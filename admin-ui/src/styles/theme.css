@@ -38,7 +38,9 @@
   --radius-xl: 24px;
 
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.4), 0 0 0 1px var(--c-border);
-  --shadow-card-hover: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--c-border-active), 0 0 30px var(--c-accent-dim);
+  --shadow-card-hover:
+    0 4px 20px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--c-border-active),
+    0 0 30px var(--c-accent-dim);
   --shadow-glow: 0 0 20px var(--c-accent-dim), 0 0 60px rgba(0, 216, 255, 0.08);
 
   --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
@@ -135,7 +137,9 @@ body {
   border: 1px solid var(--c-border) !important;
   border-radius: var(--radius-sm) !important;
   box-shadow: none !important;
-  transition: border-color var(--transition-base), box-shadow var(--transition-base);
+  transition:
+    border-color var(--transition-base),
+    box-shadow var(--transition-base);
 }
 .el-input__wrapper:hover {
   border-color: var(--c-border-active) !important;
@@ -272,29 +276,55 @@ body {
 
 /* ---------- 动画关键帧 ---------- */
 @keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(16px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 @keyframes glowPulse {
-  0%, 100% { box-shadow: 0 0 8px var(--c-accent-dim); }
-  50%      { box-shadow: 0 0 20px var(--c-accent-glow), 0 0 40px var(--c-accent-dim); }
+  0%,
+  100% {
+    box-shadow: 0 0 8px var(--c-accent-dim);
+  }
+  50% {
+    box-shadow:
+      0 0 20px var(--c-accent-glow),
+      0 0 40px var(--c-accent-dim);
+  }
 }
 @keyframes shimmer {
-  0%   { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
 }
 @keyframes borderGlow {
-  0%, 100% { border-color: var(--c-border); }
-  50%      { border-color: var(--c-accent); }
+  0%,
+  100% {
+    border-color: var(--c-border);
+  }
+  50% {
+    border-color: var(--c-accent);
+  }
 }
 
 /* ---------- 工具类 ---------- */
 .text-mono {
-  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
   font-size: 0.85em;
 }
 .text-gradient {
@@ -309,4 +339,8 @@ body {
   border-radius: var(--radius-lg) !important;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+}
+.el-select__wrapper {
+  background-color: var(--c-bg-surface) !important;
+  border: 1px solid var(--c-border) !important;
 }

@@ -107,7 +107,7 @@ impl Collector for ClaudeCodeCollector {
                     session_id: entry.session_id.clone(),
                     pid: None,
                     cwd: Some(entry.project.clone()),
-                    started_at: entry.parsed_timestamp().unwrap_or_default(),
+                    started_at: entry.timestamp,
                     ended_at: None,
                     version: None,
                     status: SessionStatus::Active,
@@ -147,7 +147,10 @@ impl Collector for ClaudeCodeCollector {
 
                 if let Ok(conv_events) = conv_parser.parse_incremental() {
                     if !conv_events.is_empty() {
-                        let aggregated = aggregate_conversation_events(&conv_events);
+                        let sid = session_path.file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("unknown");
+                        let aggregated = aggregate_conversation_events(sid, &conv_events);
                         events.extend(aggregated);
                     }
                     self.cursor.session_cursors.insert(path_key, conv_parser.offset());
@@ -165,77 +168,89 @@ impl Collector for ClaudeCodeCollector {
 }
 
 /// 将 conversation JSONL 事件聚合为 RawEvent 列表
-fn aggregate_conversation_events(events: &[ConversationEvent]) -> Vec<RawEvent> {
+fn aggregate_conversation_events(session_id: &str, events: &[ConversationEvent]) -> Vec<RawEvent> {
     let mut result = Vec::new();
     let mut messages: Vec<MessageRecord> = Vec::new();
+    let mut msg_seq: u32 = 0;
+
+    // 从事件中提取上下文信息（cwd, git_branch）
+    let first_event = events.first();
+    let cwd = first_event.and_then(|e| e.cwd.clone()).unwrap_or_default();
+    let git_branch = first_event.and_then(|e| e.git_branch.clone());
 
     for event in events {
-        let event_type = event.event_type.as_deref().unwrap_or("unknown");
+        match event.event_type.as_str() {
+            "user" | "assistant" => {
+                let Some(ref msg_block) = event.message else { continue };
 
-        match event_type {
-            "message" => {
-                let seq = event.seq.unwrap_or(0);
-                let role = match event.role.as_deref() {
-                    Some("assistant") => MessageRole::Assistant,
-                    _ => MessageRole::User,
+                // 跳过 meta/system 消息（如 local-command-caveat）
+                let role = if msg_block.is_user() {
+                    MessageRole::User
+                } else if msg_block.is_assistant() {
+                    MessageRole::Assistant
+                } else {
+                    continue;
                 };
+
+                // 跳过空内容（如纯 tool_use 的 assistant 消息）
+                let content_text = event.content_text();
+                if content_text.is_empty() && msg_block.is_assistant() {
+                    // assistant 消息可能只有 tool_use 而没有 text，跳过
+                    continue;
+                }
+
+                msg_seq += 1;
                 let msg = MessageRecord {
-                    seq,
+                    seq: msg_seq,
                     role,
-                    content: event.content.clone().unwrap_or_default(),
-                    model: event.model.clone(),
-                    tokens_input: event.tokens.as_ref().and_then(|t| t.input),
-                    tokens_output: event.tokens.as_ref().and_then(|t| t.output),
+                    content: content_text,
+                    model: msg_block.model.clone(),
+                    tokens_input: msg_block.usage.as_ref().and_then(|u| u.input_tokens),
+                    tokens_output: msg_block.usage.as_ref().and_then(|u| u.output_tokens),
                     timestamp: event.parsed_timestamp().unwrap_or_default(),
                 };
                 messages.push(msg);
-            }
 
-            "code_edit" => {
-                if let Some(ref edit) = event.file_edit {
+                // 同时检查是否有文件操作（user 消息中嵌套 toolUseResult）
+                if let Some(ref tool_result) = event.tool_use_result {
+                    let edit_type = match tool_result.result_type.as_deref() {
+                        Some("create") => EditType::Create,
+                        Some("delete") => EditType::Delete,
+                        Some("update") | Some("file_unchanged") => EditType::Modify,
+                        _ => continue,
+                    };
+
+                    let (lines_added, lines_removed, diff_content) = if let Some(ref patches) = tool_result.structured_patch {
+                        let added: i32 = patches.iter()
+                            .filter_map(|p| p.lines.as_ref().map(|l| l.iter().filter(|line| line.starts_with('+')).count() as i32))
+                            .sum();
+                        let removed: i32 = patches.iter()
+                            .filter_map(|p| p.lines.as_ref().map(|l| l.iter().filter(|line| line.starts_with('-')).count() as i32))
+                            .sum();
+                        let diff = patches.iter()
+                            .filter_map(|p| p.lines.as_ref().map(|l| l.join("\n")))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        (Some(added), Some(removed), if diff.is_empty() { None } else { Some(diff) })
+                    } else {
+                        (None, None, None)
+                    };
+
                     let code_edit = CodeEditRecord {
-                        session_id: String::new(),
-                        file_path: edit.path.clone().unwrap_or_default(),
-                        edit_type: match edit.edit_type.as_deref() {
-                            Some("create") => EditType::Create,
-                            Some("delete") => EditType::Delete,
-                            Some("rename") => EditType::Rename,
-                            _ => EditType::Modify,
-                        },
-                        lines_added: edit.lines_added,
-                        lines_removed: edit.lines_removed,
-                        diff_content: edit.diff.clone(),
+                        session_id: session_id.to_string(),
+                        file_path: tool_result.file_path.clone().unwrap_or_default(),
+                        edit_type,
+                        lines_added,
+                        lines_removed,
+                        diff_content,
                         timestamp: event.parsed_timestamp().unwrap_or_default(),
                     };
                     result.push(RawEvent::CodeEdit(code_edit));
                 }
             }
 
-            "action" => {
-                if let Some(ref action) = event.action {
-                    let action_event = ActionEvent {
-                        session_id: String::new(),
-                        action: match action.action_type.as_deref() {
-                            Some("accept") => ActionType::Accept,
-                            Some("reject") => ActionType::Reject,
-                            Some("modify") => ActionType::Modify,
-                            Some("ignore") => ActionType::Ignore,
-                            Some("regenerate") => ActionType::Regenerate,
-                            Some("copy") => ActionType::Copy,
-                            Some("paste") => ActionType::Paste,
-                            _ => continue,
-                        },
-                        message_seq: action.message_seq,
-                        file_path: action.file_path.clone(),
-                        extra: None,
-                        timestamp: event.parsed_timestamp().unwrap_or_default(),
-                    };
-                    result.push(RawEvent::Action(action_event));
-                }
-            }
-
             _ => {
-                log::trace!("忽略未知事件类型: {}", event_type);
+                // 忽略其他事件类型: file-history-snapshot, attachment, etc.
             }
         }
     }
@@ -247,10 +262,10 @@ fn aggregate_conversation_events(events: &[ConversationEvent]) -> Vec<RawEvent> 
         let model = messages.iter().find(|m| m.model.is_some()).and_then(|m| m.model.clone());
 
         let conversation = ConversationRecord {
-            session_id: String::new(),
+            session_id: session_id.to_string(),
             project_path_hash: String::new(),
-            project_path: String::new(),
-            git_branch: None,
+            project_path: cwd,
+            git_branch,
             started_at,
             ended_at,
             messages,

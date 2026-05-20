@@ -10,10 +10,12 @@ pub struct QueryParams {
     pub page_size: Option<u32>,
     /// 按 agent_id 筛选
     pub agent_id: Option<String>,
-    /// 按工具筛选
+    /// 按工具筛选 (用于 action_events 表 event_type)
     pub tool: Option<String>,
-    /// 按模型筛选
+    /// 按模型筛选 (用于 messages 表)
     pub model: Option<String>,
+    /// 关键词搜索 (匹配 session_id、git_branch)
+    pub keyword: Option<String>,
     /// 开始日期 (YYYY-MM-DD)
     pub date_from: Option<String>,
     /// 结束日期 (YYYY-MM-DD)
@@ -51,7 +53,7 @@ pub struct DashboardStats {
 
 #[derive(Debug, serde::Serialize, sqlx::FromRow)]
 pub struct DailyTrendItem {
-    pub date: String,
+    pub date: chrono::NaiveDate,
     pub count: i64,
 }
 
@@ -474,6 +476,15 @@ fn build_session_filter(params: &QueryParams) -> (String, Vec<String>) {
     if let Some(ref agent_id) = params.agent_id {
         conditions.push("agent_id = ?".to_string());
         values.push(agent_id.clone());
+    }
+    if let Some(ref keyword) = params.keyword {
+        let kw = keyword.trim();
+        if !kw.is_empty() {
+            conditions.push("(id LIKE ? OR git_branch LIKE ?)".to_string());
+            let pattern = format!("%{}%", kw);
+            values.push(pattern.clone());
+            values.push(pattern);
+        }
     }
     if let Some(ref date_from) = params.date_from {
         conditions.push("started_at >= ?".to_string());

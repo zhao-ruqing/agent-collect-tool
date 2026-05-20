@@ -27,20 +27,24 @@ impl EventAggregator {
     /// 推入一个事件进行聚合
     pub fn push(&mut self, event: RawEvent) {
         let sid = event_session_id(&event);
-        let bucket = self.buffer.entry(sid).or_default();
 
         match &event {
             RawEvent::Conversation(_) => {
+                let bucket = self.buffer.entry(sid).or_default();
                 bucket.conversation = Some(Box::new(event));
             }
             RawEvent::CodeEdit(_) => {
+                let bucket = self.buffer.entry(sid).or_default();
                 bucket.edits.push(event);
             }
             RawEvent::Action(_) => {
+                let bucket = self.buffer.entry(sid).or_default();
                 bucket.actions.push(event);
             }
             RawEvent::Session(_) => {
-                // Session 事件独立存在，不与其他事件合并
+                // Session 事件独立输出，不与其他事件合并
+                let bucket = self.buffer.entry(format!("__session__{}", sid)).or_default();
+                bucket.conversation = Some(Box::new(event));
             }
         }
     }

@@ -4,10 +4,9 @@ import type { ApiResponse, PaginatedList, Session } from '../types'
 export async function fetchConversations(params?: {
   page?: number
   page_size?: number
-  start_date?: string
-  end_date?: string
-  tool?: string
-  model?: string
+  date_from?: string
+  date_to?: string
+  keyword?: string
   agent_id?: string
 }): Promise<PaginatedList<Session>> {
   const res = await client.get<ApiResponse<PaginatedList<Session>>>('/admin/conversations', { params })

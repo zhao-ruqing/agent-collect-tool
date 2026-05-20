@@ -83,7 +83,7 @@ impl Reporter for HttpReporter {
                     } else if status.is_client_error() {
                         let body = resp.text().await.unwrap_or_default();
                         log::error!("上报被拒绝 ({}): {}, 不重试", status, body);
-                        return Ok(0);
+                        return Err(anyhow::anyhow!("上报被拒绝 ({}): {}", status, body));
                     } else {
                         log::warn!("上报服务端错误 ({}), 第 {} 次重试", status, attempt + 1);
                     }

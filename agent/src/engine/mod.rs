@@ -152,8 +152,8 @@ impl Engine {
         let queue_len = self.queue.len();
         log::info!("队列中 {} 条事件待上报", queue_len);
 
-        // 每次最多取 500 条
-        match self.queue.pop_batch(500) {
+        // 每次最多取 50 条
+        match self.queue.pop_batch(50) {
             Ok(entries) => {
                 if entries.is_empty() {
                     return;
@@ -169,13 +169,16 @@ impl Engine {
                 let event_count = events.len();
 
                 match self.reporter.report(events).await {
-                    Ok(_) => {
+                    Ok(count) if count > 0 => {
                         // 上报成功，清除已发送的条目
                         if let Err(e) = self.queue.clear_sent(max_seq) {
                             log::error!("清除队列已发送条目失败: {}", e);
                         } else {
-                            log::info!("上报成功 {} 条，队列剩余 {}", event_count, self.queue.len());
+                            log::info!("上报成功 {} 条，队列剩余 {}", count, self.queue.len());
                         }
+                    }
+                    Ok(_) => {
+                        log::warn!("上报返回 0 条，事件保留在队列中");
                     }
                     Err(e) => {
                         log::error!("上报失败: {}，事件保留在队列中", e);

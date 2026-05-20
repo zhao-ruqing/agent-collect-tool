@@ -16,6 +16,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1.7", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
-tower-http = { version = "0.5", features = ["cors", "compression-full", "trace"] }
+tower-http = { version = "0.5", features = ["cors", "decompression-gzip", "trace"] }
 regex = "1"
 dotenvy = "0.15"

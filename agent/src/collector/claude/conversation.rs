@@ -4,96 +4,108 @@ use serde::Deserialize;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::PathBuf;
 
-/// conversation JSONL 中的单条事件
+/// conversation JSONL 中的单条事件（匹配 Claude Code 实际格式）
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConversationEvent {
-    /// 事件类型: "message", "code_edit", "action"
+    /// 事件类型: "user", "assistant", "file-history-snapshot", etc.
     #[serde(rename = "type")]
-    pub event_type: Option<String>,
+    pub event_type: String,
 
-    /// 角色: "user", "assistant"
+    /// 事件 UUID
     #[serde(default)]
-    pub role: Option<String>,
+    pub uuid: Option<String>,
 
-    /// 消息/事件内容
+    /// 父事件 UUID（对话树）
     #[serde(default)]
-    pub content: Option<String>,
+    pub parent_uuid: Option<String>,
 
-    /// 使用的模型
-    #[serde(default)]
-    pub model: Option<String>,
+    /// Session ID
+    #[serde(default, rename = "sessionId")]
+    pub session_id: Option<String>,
 
-    /// Token 统计
+    /// 工作目录
     #[serde(default)]
-    pub tokens: Option<TokenInfo>,
+    pub cwd: Option<String>,
+
+    /// Git 分支名
+    #[serde(default, rename = "gitBranch")]
+    pub git_branch: Option<String>,
 
     /// 时间戳
     #[serde(default)]
     pub timestamp: Option<String>,
 
-    /// 序号（消息顺序）
+    /// 消息体（user / assistant 消息）
     #[serde(default)]
-    pub seq: Option<u32>,
+    pub message: Option<MessageBlock>,
 
-    /// 消息 ID
-    #[serde(default)]
-    pub id: Option<String>,
-
-    /// 父消息 ID（对话树）
-    #[serde(default)]
-    pub parent_id: Option<String>,
-
-    /// 文件编辑信息（当 type = "code_edit" 时）
-    #[serde(default)]
-    pub file_edit: Option<FileEditInfo>,
-
-    /// 行为事件信息（当 type = "action" 时）
-    #[serde(default)]
-    pub action: Option<ActionInfo>,
-
-    /// 其他未知字段
-    #[serde(flatten)]
-    pub extra: serde_json::Value,
+    /// 文件操作结果（工具调用结果中的 create / update / delete）
+    #[serde(default, rename = "toolUseResult")]
+    pub tool_use_result: Option<ToolUseResult>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct TokenInfo {
+pub struct MessageBlock {
+    /// 角色: "user", "assistant"
     #[serde(default)]
-    pub input: Option<i32>,
+    pub role: Option<String>,
+
+    /// 消息内容：user 消息中是字符串，assistant 消息中是内容块数组
     #[serde(default)]
-    pub output: Option<i32>,
+    pub content: serde_json::Value,
+
+    /// 模型名称（仅 assistant）
+    #[serde(default)]
+    pub model: Option<String>,
+
+    /// Token 用量（仅 assistant）
+    #[serde(default)]
+    pub usage: Option<UsageInfo>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct FileEditInfo {
+pub struct UsageInfo {
+    #[serde(default, rename = "input_tokens")]
+    pub input_tokens: Option<i32>,
+    #[serde(default, rename = "output_tokens")]
+    pub output_tokens: Option<i32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ToolUseResult {
+    /// 操作类型: "create", "update", "delete"
+    #[serde(rename = "type")]
+    pub result_type: Option<String>,
+
     /// 文件路径
+    #[serde(default, rename = "filePath")]
+    pub file_path: Option<String>,
+
+    /// 新文件内容（create/update 时）
     #[serde(default)]
-    pub path: Option<String>,
-    /// 编辑类型
-    #[serde(default)]
-    pub edit_type: Option<String>,
-    /// 新增行数
-    #[serde(default)]
-    pub lines_added: Option<i32>,
-    /// 删除行数
-    #[serde(default)]
-    pub lines_removed: Option<i32>,
-    /// diff 内容
-    #[serde(default)]
-    pub diff: Option<String>,
+    pub content: Option<String>,
+
+    /// 结构化补丁（update 时）
+    #[serde(default, rename = "structuredPatch")]
+    pub structured_patch: Option<Vec<StructuredPatch>>,
+
+    /// 原文件内容（update 时）
+    #[serde(default, rename = "originalFile")]
+    pub original_file: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct ActionInfo {
-    /// 行为类型: accept, reject, modify, ignore, regenerate, copy, paste
+pub struct StructuredPatch {
     #[serde(default)]
-    pub action_type: Option<String>,
-    /// 相关消息序号
+    pub old_start: Option<i32>,
     #[serde(default)]
-    pub message_seq: Option<u32>,
-    /// 相关文件路径
+    pub old_lines: Option<i32>,
     #[serde(default)]
-    pub file_path: Option<String>,
+    pub new_start: Option<i32>,
+    #[serde(default)]
+    pub new_lines: Option<i32>,
+    #[serde(default)]
+    pub lines: Option<Vec<String>>,
 }
 
 impl ConversationEvent {
@@ -103,6 +115,54 @@ impl ConversationEvent {
             .as_deref()
             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.with_timezone(&Utc))
+    }
+
+    /// 从嵌套的 content 中提取纯文本（用于哈希/摘要）
+    pub fn content_text(&self) -> String {
+        match &self.message {
+            Some(msg) => extract_content_text(&msg.content),
+            None => String::new(),
+        }
+    }
+}
+
+/// 从 serde_json::Value 提取文本内容
+fn extract_content_text(content: &serde_json::Value) -> String {
+    match content {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(arr) => {
+            let parts: Vec<String> = arr
+                .iter()
+                .filter_map(|block| {
+                    // assistant 内容块: { "type": "text", "text": "..." }
+                    // 或 { "type": "thinking", "thinking": "..." }
+                    // 或 { "type": "tool_use", ... }
+                    block.get("text")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| block.get("thinking").and_then(|v| v.as_str()))
+                        .map(|s| s.to_string())
+                })
+                .collect();
+            if parts.is_empty() {
+                // 如果没有 text/thinking，序列化整个数组
+                serde_json::to_string(&arr).unwrap_or_default()
+            } else {
+                parts.join("\n")
+            }
+        }
+        _ => serde_json::to_string(content).unwrap_or_default(),
+    }
+}
+
+impl MessageBlock {
+    /// 是否为 user 类型
+    pub fn is_user(&self) -> bool {
+        self.role.as_deref() == Some("user")
+    }
+
+    /// 是否为 assistant 类型
+    pub fn is_assistant(&self) -> bool {
+        self.role.as_deref() == Some("assistant")
     }
 }
 
@@ -190,7 +250,9 @@ impl ConversationParser {
 
 /// 扫描 projects 目录，找到所有 session JSONL 文件
 ///
-/// 结构: projects/<project_hash>/<session_id>.jsonl
+/// 支持两种结构:
+/// 1. projects/<project_hash>/<session_id>.jsonl
+/// 2. projects/<project_hash>/<session_id>/<session_id>.jsonl
 pub fn scan_project_sessions(projects_dir: &std::path::Path) -> Result<Vec<PathBuf>> {
     if !projects_dir.exists() || !projects_dir.is_dir() {
         return Ok(vec![]);
@@ -216,8 +278,21 @@ pub fn scan_project_sessions(projects_dir: &std::path::Path) -> Result<Vec<PathB
             };
 
             let session_path = session_entry.path();
-            if session_path.extension().map_or(false, |ext| ext == "jsonl") {
+            if session_path.is_file() && session_path.extension().map_or(false, |ext| ext == "jsonl") {
+                // 结构 1: projects/<hash>/<session>.jsonl
                 session_files.push(session_path);
+            } else if session_path.is_dir() {
+                // 结构 2: projects/<hash>/<session_id>/<session_id>.jsonl
+                if let Ok(sub_entries) = std::fs::read_dir(&session_path) {
+                    for sub_entry in sub_entries {
+                        if let Ok(sub) = sub_entry {
+                            let sub_path = sub.path();
+                            if sub_path.extension().map_or(false, |ext| ext == "jsonl") {
+                                session_files.push(sub_path);
+                            }
+                        }
+                    }
+                }
             }
         }
     }

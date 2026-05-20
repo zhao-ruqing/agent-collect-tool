@@ -8,6 +8,7 @@ pub struct Message {
     pub session_id: String,
     pub role: String, // 'user' or 'assistant'
     pub content_hash: Option<String>,
+    pub content: Option<String>,
     pub model: Option<String>,
     pub tokens_input: Option<i32>,
     pub tokens_output: Option<i32>,

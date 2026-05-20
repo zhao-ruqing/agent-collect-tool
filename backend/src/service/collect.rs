@@ -86,7 +86,27 @@ pub async fn process_batch(pool: &MySqlPool, payload: &CollectionPayload) -> Res
     let mut accepted = 0;
     let mut rejected = 0;
 
+    // 确保 agent 已注册（自动注册，避免 FK 约束失败）
+    if let Err(e) = store::agent::insert(pool, &payload.agent_id, "auto-registered").await {
+        tracing::warn!("自动注册 agent 失败 (可能已存在): {}", e);
+    }
+
+    // 分批处理：先处理 Session/Conversation（会创建 session 行），再处理 CodeEdit/Action（依赖 session）
+    let mut session_conv_events: Vec<&CollectionEvent> = Vec::new();
+    let mut child_events: Vec<&CollectionEvent> = Vec::new();
+
     for event in &payload.events {
+        match event {
+            CollectionEvent::Session(_) | CollectionEvent::Conversation(_) => {
+                session_conv_events.push(event);
+            }
+            CollectionEvent::CodeEdit(_) | CollectionEvent::Action(_) => {
+                child_events.push(event);
+            }
+        }
+    }
+
+    for event in session_conv_events.iter().chain(child_events.iter()) {
         match event {
             CollectionEvent::Session(sess) => {
                 match process_session(pool, &payload.agent_id, sess).await {
@@ -199,7 +219,7 @@ async fn process_conversation(pool: &MySqlPool, agent_id: &str, conv: &Conversat
     )
     .await?;
 
-    // 再插入 messages（content 脱敏后存储）
+    // 再插入 messages（content 原文 + 哈希同时存储）
     let messages: Vec<_> = conv
         .messages
         .iter()
@@ -209,6 +229,7 @@ async fn process_conversation(pool: &MySqlPool, agent_id: &str, conv: &Conversat
                 conv.session_id.clone(),
                 m.role.clone(),
                 content_hash,
+                m.content.clone(),
                 m.model.clone(),
                 m.tokens_input,
                 m.tokens_output,

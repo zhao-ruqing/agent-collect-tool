@@ -83,7 +83,10 @@
                 <span class="msg-time">{{ msg.created_at ? formatTime(msg.created_at) : '—' }}</span>
               </div>
               <div class="msg-content">
-                <div class="msg-hash">
+                <div class="msg-text" v-if="msg.content">
+                  <pre class="content-pre">{{ msg.content }}</pre>
+                </div>
+                <div class="msg-hash" v-else>
                   <span class="info-label">内容哈希</span>
                   <code class="text-mono">{{ msg.content_hash || '—' }}</code>
                 </div>
@@ -122,6 +125,7 @@ const detail = reactive<{
     id: number
     role: string
     content_hash: string | null
+    content: string | null
     model: string | null
     tokens_input: number | null
     tokens_output: number | null
@@ -203,6 +207,14 @@ onMounted(async () => {
   padding: 3px 8px; border-radius: var(--radius-sm);
   word-break: break-all; max-width: 400px; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap;
+}
+.msg-text { margin-bottom: 4px; }
+.content-pre {
+  margin: 0; padding: 10px 14px; background: rgba(0,0,0,0.25);
+  border-radius: var(--radius-md); border: 1px solid var(--c-border);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 12px; line-height: 1.6; color: var(--c-text);
+  white-space: pre-wrap; word-break: break-word; max-height: 400px; overflow-y: auto;
 }
 .msg-tokens { display: flex; gap: 10px; }
 .token-badge {
