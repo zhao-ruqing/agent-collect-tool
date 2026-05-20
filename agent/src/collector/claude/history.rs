@@ -26,7 +26,6 @@ impl HistoryEntry {
             .map(|dt| dt.with_timezone(&Utc))
     }
 }
-
 /// history.jsonl 增量解析器
 ///
 /// 记录文件读取偏移，每次调用只解析新增的行
