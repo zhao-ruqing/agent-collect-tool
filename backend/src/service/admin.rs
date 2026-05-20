@@ -1,7 +1,7 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::MySqlPool;
 
-use crate::model::{action_event::ActionEvent, code_edit::CodeEdit, daily_stat::DailyStat, session::Session};
+use crate::model::{action_event::ActionEvent, agent::Agent, code_edit::CodeEdit, daily_stat::DailyStat, message::Message, session::Session};
 
 /// 分页 + 筛选参数
 #[derive(Debug, Deserialize)]
@@ -56,12 +56,34 @@ pub struct DailyTrendItem {
 }
 
 /// 分页列表
-#[derive(Debug, serde::Serialize)]
-pub struct PaginatedList<T: serde::Serialize> {
+#[derive(Debug, Serialize)]
+pub struct PaginatedList<T: Serialize> {
     pub list: Vec<T>,
     pub total: i64,
     pub page: u32,
     pub page_size: u32,
+}
+
+/// 会话详情（含消息列表）
+#[derive(Debug, Serialize)]
+pub struct ConversationDetail {
+    pub session: Session,
+    pub messages: Vec<Message>,
+}
+
+/// Agent 详情
+#[derive(Debug, Serialize)]
+pub struct AgentDetail {
+    pub agent: Agent,
+    pub recent_sessions: Vec<Session>,
+    pub stats: AgentStats,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AgentStats {
+    pub total_sessions: i64,
+    pub total_messages: i64,
+    pub total_edits: i64,
 }
 
 /// 仪表盘统计
@@ -261,6 +283,184 @@ pub async fn get_daily_stats(
         page: params.page(),
         page_size: params.limit(),
     })
+}
+
+/// 单个会话详情（含消息列表）
+pub async fn get_conversation_detail(
+    pool: &MySqlPool,
+    session_id: &str,
+) -> Result<ConversationDetail, crate::error::AppError> {
+    let session: Session = sqlx::query_as("SELECT * FROM sessions WHERE id = ?")
+        .bind(session_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| crate::error::AppError::NotFound("会话不存在".into()))?;
+
+    let messages: Vec<Message> = sqlx::query_as(
+        "SELECT * FROM messages WHERE session_id = ? ORDER BY id ASC",
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(ConversationDetail { session, messages })
+}
+
+/// Agent 列表（分页）
+pub async fn list_agents(
+    pool: &MySqlPool,
+    params: &QueryParams,
+) -> Result<PaginatedList<Agent>, crate::error::AppError> {
+    let (total,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agents")
+        .fetch_one(pool)
+        .await?;
+
+    let list: Vec<Agent> = sqlx::query_as(
+        "SELECT * FROM agents ORDER BY last_seen_at DESC LIMIT ? OFFSET ?",
+    )
+    .bind(params.limit())
+    .bind(params.offset())
+    .fetch_all(pool)
+    .await?;
+
+    Ok(PaginatedList {
+        list,
+        total,
+        page: params.page(),
+        page_size: params.limit(),
+    })
+}
+
+/// Agent 详情（含最近会话和统计）
+pub async fn get_agent_detail(
+    pool: &MySqlPool,
+    agent_id: &str,
+) -> Result<AgentDetail, crate::error::AppError> {
+    let agent: Agent = sqlx::query_as("SELECT * FROM agents WHERE id = ?")
+        .bind(agent_id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| crate::error::AppError::NotFound("客户端不存在".into()))?;
+
+    let total_sessions: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM sessions WHERE agent_id = ?")
+            .bind(agent_id)
+            .fetch_one(pool)
+            .await?;
+
+    let total_messages: (i64,) =
+        sqlx::query_as(
+            "SELECT COUNT(*) FROM messages m JOIN sessions s ON m.session_id = s.id WHERE s.agent_id = ?",
+        )
+        .bind(agent_id)
+        .fetch_one(pool)
+        .await?;
+
+    let total_edits: (i64,) =
+        sqlx::query_as(
+            "SELECT COUNT(*) FROM code_edits ce JOIN sessions s ON ce.session_id = s.id WHERE s.agent_id = ?",
+        )
+        .bind(agent_id)
+        .fetch_one(pool)
+        .await?;
+
+    let recent_sessions: Vec<Session> = sqlx::query_as(
+        "SELECT * FROM sessions WHERE agent_id = ? ORDER BY started_at DESC LIMIT 5",
+    )
+    .bind(agent_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(AgentDetail {
+        agent,
+        recent_sessions,
+        stats: AgentStats {
+            total_sessions: total_sessions.0,
+            total_messages: total_messages.0,
+            total_edits: total_edits.0,
+        },
+    })
+}
+
+/// CSV 导出：查询 sessions + messages 汇总数据
+pub async fn export_csv(
+    pool: &MySqlPool,
+    params: &QueryParams,
+) -> Result<String, crate::error::AppError> {
+    let mut conditions: Vec<&str> = Vec::new();
+    let mut bind_values: Vec<String> = Vec::new();
+
+    if let Some(ref agent_id) = params.agent_id {
+        conditions.push("s.agent_id = ?");
+        bind_values.push(agent_id.clone());
+    }
+    if let Some(ref date_from) = params.date_from {
+        conditions.push("s.started_at >= ?");
+        bind_values.push(date_from.clone());
+    }
+    if let Some(ref date_to) = params.date_to {
+        conditions.push("s.started_at <= ?");
+        bind_values.push(date_to.clone());
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    };
+
+    let sql = format!(
+        r#"SELECT s.id, s.agent_id, s.project_path_hash, s.git_branch,
+                  s.started_at, s.ended_at,
+                  COUNT(m.id) as msg_count,
+                  COALESCE(SUM(m.tokens_input), 0) as total_input,
+                  COALESCE(SUM(m.tokens_output), 0) as total_output
+           FROM sessions s
+           LEFT JOIN messages m ON m.session_id = s.id
+           {}
+           GROUP BY s.id
+           ORDER BY s.started_at DESC
+           LIMIT 10000"#,
+        where_clause
+    );
+
+    let mut query = sqlx::query_as(&sql);
+    for val in &bind_values {
+        query = query.bind(val);
+    }
+
+    #[derive(sqlx::FromRow)]
+    struct ExportRow {
+        id: String,
+        agent_id: String,
+        project_path_hash: Option<String>,
+        git_branch: Option<String>,
+        started_at: chrono::DateTime<chrono::Utc>,
+        ended_at: Option<chrono::DateTime<chrono::Utc>>,
+        msg_count: i64,
+        total_input: i64,
+        total_output: i64,
+    }
+
+    let rows: Vec<ExportRow> = query.fetch_all(pool).await?;
+
+    let mut csv = String::from("会话ID,客户端ID,项目哈希,分支,开始时间,结束时间,消息数,输入Token,输出Token\n");
+    for r in rows {
+        csv.push_str(&format!(
+            "{},{},{},{},{},{},{},{},{}\n",
+            r.id,
+            r.agent_id,
+            r.project_path_hash.as_deref().unwrap_or(""),
+            r.git_branch.as_deref().unwrap_or(""),
+            r.started_at.format("%Y-%m-%d %H:%M:%S"),
+            r.ended_at.map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_default(),
+            r.msg_count,
+            r.total_input,
+            r.total_output,
+        ));
+    }
+
+    Ok(csv)
 }
 
 // ============================================================

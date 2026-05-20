@@ -59,8 +59,8 @@
           <template #default="{ row }">{{ row.ended_at || '—' }}</template>
         </el-table-column>
         <el-table-column label="操作" width="100" align="center">
-          <template #default>
-            <el-button type="primary" link>详情</el-button>
+          <template #default="{ row }">
+            <el-button type="primary" link @click="goDetail(row.id)">详情</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -81,9 +81,11 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { fetchConversations } from '../api/conversations'
 import type { Session } from '../types'
 
+const router = useRouter()
 const loading = ref(false)
 const filters = reactive({ dateRange: null as [string, string] | null, tool: '', model: '' })
 const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
@@ -93,13 +95,18 @@ async function handleSearch() {
   loading.value = true
   try {
     const params: Record<string, unknown> = { page: pagination.page, page_size: pagination.pageSize }
-    if (filters.dateRange) { params.start_date = filters.dateRange[0]; params.end_date = filters.dateRange[1] }
+    if (filters.dateRange) { params.date_from = filters.dateRange[0]; params.date_to = filters.dateRange[1] }
     if (filters.tool) params.tool = filters.tool
     if (filters.model) params.model = filters.model
-    const res = await fetchConversations(params as never)
-    if (res.data) { tableData.value = res.data.data || []; pagination.total = res.data.total || 0 }
+    const res = await fetchConversations(params as any)
+    tableData.value = res.list || []
+    pagination.total = res.total || 0
   } catch { tableData.value = []; pagination.total = 0 }
   finally { loading.value = false }
+}
+
+function goDetail(sessionId: string) {
+  router.push({ name: 'conversation-detail', params: { sessionId } })
 }
 
 function handleReset() {

@@ -20,6 +20,11 @@ const router = createRouter({
           component: () => import('../views/Conversations.vue'),
         },
         {
+          path: 'conversations/:sessionId',
+          name: 'conversation-detail',
+          component: () => import('../views/ConversationDetail.vue'),
+        },
+        {
           path: 'edits',
           name: 'edits',
           component: () => import('../views/CodeEdits.vue'),

@@ -69,7 +69,9 @@ async function loadData() {
   loading.value = true
   try {
     const res = await client.get('/admin/events', { params: { page: pagination.page, page_size: pagination.pageSize } })
-    if (res.data) { tableData.value = res.data.data || []; pagination.total = res.data.total || 0 }
+    const payload = res.data?.data
+    tableData.value = payload?.list || []
+    pagination.total = payload?.total || 0
   } catch { tableData.value = []; pagination.total = 0 }
   finally { loading.value = false }
 }

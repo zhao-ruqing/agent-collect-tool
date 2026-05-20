@@ -42,8 +42,8 @@
           <template #default="{ row }">{{ row.created_at || '—' }}</template>
         </el-table-column>
         <el-table-column label="操作" width="100" align="center">
-          <template #default>
-            <el-button type="primary" link>查看 Diff</el-button>
+          <template #default="{ row }">
+            <el-button type="primary" link @click="showDiff(row)">查看 Diff</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -59,6 +59,16 @@
         />
       </div>
     </div>
+
+    <!-- Diff 查看弹窗 -->
+    <el-dialog v-model="diffVisible" title="Diff 骨架" width="800px" destroy-on-close>
+      <div class="diff-box">
+        <pre class="diff-content" v-html="renderDiff(diffContent)"></pre>
+      </div>
+      <template #footer>
+        <el-button @click="diffVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -78,11 +88,36 @@ function editLabel(type: string | null): string {
   switch (type) { case 'create': return '新建'; case 'modify': return '修改'; case 'delete': return '删除'; case 'rename': return '重命名'; default: return type || '—' }
 }
 
+const diffVisible = ref(false)
+const diffContent = ref('')
+
+function showDiff(row: CodeEdit) {
+  diffContent.value = row.diff_skeleton || '暂无 diff 数据'
+  diffVisible.value = true
+}
+
+function renderDiff(raw: string): string {
+  if (!raw) return '<span class="diff-empty">暂无 diff 内容</span>'
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .split('\n')
+    .map((line) => {
+      if (line.startsWith('@@')) return `<span class="diff-hunk">${line}</span>`
+      if (line.startsWith('+'))  return `<span class="diff-add">${line}</span>`
+      if (line.startsWith('-'))  return `<span class="diff-del">${line}</span>`
+      return `<span class="diff-ctx">${line}</span>`
+    })
+    .join('\n')
+}
+
 async function loadData() {
   loading.value = true
   try {
     const res = await fetchCodeEdits({ page: pagination.page, page_size: pagination.pageSize })
-    if (res.data) { tableData.value = res.data.data || []; pagination.total = res.data.total || 0 }
+    tableData.value = res.list || []
+    pagination.total = res.total || 0
   } catch { tableData.value = []; pagination.total = 0 }
   finally { loading.value = false }
 }
@@ -110,4 +145,27 @@ onMounted(() => loadData())
 .text-mono { font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace; font-size: 12px; }
 .num-add { color: var(--c-emerald); font-weight: 600; font-family: 'JetBrains Mono', monospace; }
 .num-rm  { color: var(--c-rose); font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+
+/* Diff 查看器 */
+.diff-box {
+  max-height: 500px;
+  overflow: auto;
+  border-radius: var(--radius-md);
+  background: #0d1117;
+}
+.diff-content {
+  margin: 0;
+  padding: 16px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #c9d1d9;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.diff-content :deep(.diff-hunk) { color: #58a6ff; }
+.diff-content :deep(.diff-add)  { color: #7ee787; background: rgba(63, 185, 80, 0.15); display: inline-block; width: 100%; }
+.diff-content :deep(.diff-del)  { color: #f85149; background: rgba(248, 81, 73, 0.15); display: inline-block; width: 100%; }
+.diff-content :deep(.diff-ctx)  { color: #8b949e; }
+.diff-content :deep(.diff-empty) { color: #484f58; font-style: italic; }
 </style>
