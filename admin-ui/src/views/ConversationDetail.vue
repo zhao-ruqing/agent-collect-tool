@@ -51,23 +51,23 @@
             <span class="info-value">{{ detail.session.ended_at ? formatTime(detail.session.ended_at) : '—' }}</span>
           </div>
           <div class="info-item">
-            <span class="info-label">消息数</span>
-            <span class="info-value">{{ detail.messages?.length ?? 0 }}</span>
+            <span class="info-label">消息总数</span>
+            <span class="info-value">{{ totalMessages }}</span>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 消息列表 -->
+    <!-- 消息列表（滚动加载） -->
     <div class="panel">
       <div class="panel-header">
         <h3 class="panel-title">对话消息</h3>
-        <span class="panel-badge">{{ detail.messages?.length ?? 0 }} 条</span>
+        <span class="panel-badge">{{ totalMessages }} 条（已加载 {{ detail.messages.length }} 条）</span>
       </div>
-      <div class="panel-body">
+      <div class="panel-body msg-panel-body" ref="scrollContainer" @scroll="handleScroll">
         <div class="msg-list" v-loading="loading">
           <div
-            v-for="msg in detail.messages"
+            v-for="msg in visibleMessages"
             :key="msg.id"
             class="msg-item"
             :class="`msg--${msg.role}`"
@@ -109,7 +109,10 @@
               </div>
             </div>
           </div>
-          <el-empty v-if="!loading && (!detail.messages || detail.messages.length === 0)" description="暂无消息" />
+          <el-empty v-if="!loading && visibleMessages.length === 0" description="暂无有效对话消息" />
+          <!-- 滚动加载指示器 -->
+          <div v-if="loadingMore" class="load-more">加载中...</div>
+          <div v-else-if="noMore && visibleMessages.length > 0" class="load-more load-more--end">已加载全部消息</div>
         </div>
       </div>
     </div>
@@ -117,15 +120,33 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ArrowLeft, User, ChatDotRound } from '@element-plus/icons-vue'
 import { fetchConversationDetail } from '../api/conversations'
 import type { Session } from '../types'
 
+const PAGE_SIZE = 20
+
 const router = useRouter()
 const route = useRoute()
 const loading = ref(false)
+const loadingMore = ref(false)
+const currentPage = ref(1)
+const totalMessages = ref(0)
+const scrollContainer = ref<HTMLElement | null>(null)
+
+const noMore = computed(() => detail.messages.length >= totalMessages.value)
+
+// 前端安全过滤：仅展示有实际文本内容的 user/assistant 消息
+const visibleMessages = computed(() =>
+  detail.messages.filter(
+    (m) =>
+      (m.role === 'user' || m.role === 'assistant') &&
+      m.content &&
+      m.content.trim().length > 0,
+  ),
+)
 
 const detail = reactive<{
   session: Session | null
@@ -158,17 +179,45 @@ function toolLabel(t: string | null | undefined): string {
   return t || '—'
 }
 
-onMounted(async () => {
+async function loadFirstPage() {
   const sessionId = route.params.sessionId as string
   if (!sessionId) return
   loading.value = true
+  currentPage.value = 1
   try {
-    const data = await fetchConversationDetail(sessionId)
+    const data = await fetchConversationDetail(sessionId, 1, PAGE_SIZE)
     detail.session = data.session
-    detail.messages = data.messages
+    detail.messages = data.messages || []
+    totalMessages.value = data.total || 0
   } catch { /* 使用默认值 */ }
   finally { loading.value = false }
-})
+}
+
+async function loadNextPage() {
+  if (loadingMore.value || noMore.value) return
+  const sessionId = route.params.sessionId as string
+  if (!sessionId) return
+  loadingMore.value = true
+  try {
+    const nextPage = currentPage.value + 1
+    const data = await fetchConversationDetail(sessionId, nextPage, PAGE_SIZE)
+    // 追加更早的消息到列表末尾
+    detail.messages.push(...(data.messages || []))
+    currentPage.value = nextPage
+  } catch { /* 忽略加载失败 */ }
+  finally { loadingMore.value = false }
+}
+
+function handleScroll() {
+  const el = scrollContainer.value
+  if (!el) return
+  // 距底部小于 60px 时触发加载
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < 60) {
+    loadNextPage()
+  }
+}
+
+onMounted(() => loadFirstPage())
 </script>
 
 <style scoped>
@@ -192,6 +241,13 @@ onMounted(async () => {
   padding: 3px 10px; border-radius: 20px; border: 1px solid var(--c-border);
 }
 .panel-body { padding: 20px; }
+
+/* 消息列表可滚动区域 */
+.msg-panel-body {
+  max-height: calc(100vh - 380px);
+  overflow-y: auto;
+  padding: 20px;
+}
 
 /* Info Grid */
 .info-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
@@ -234,6 +290,12 @@ onMounted(async () => {
   font-size: 11px; color: var(--c-text-dim); background: var(--c-bg-surface);
   padding: 2px 8px; border-radius: var(--radius-sm); border: 1px solid var(--c-border);
 }
+
+/* 滚动加载指示器 */
+.load-more {
+  text-align: center; padding: 12px 0; font-size: 12px; color: var(--c-text-muted);
+}
+.load-more--end { opacity: 0.6; }
 
 @media (max-width: 768px) {
   .info-grid { grid-template-columns: repeat(2, 1fr); }

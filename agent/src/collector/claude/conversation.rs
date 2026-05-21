@@ -126,31 +126,55 @@ impl ConversationEvent {
     }
 }
 
-/// 从 serde_json::Value 提取文本内容
+/// 判断内容块是否为工具交互噪音（tool_use / tool_result / thinking 等）
+fn is_noise_block(block: &serde_json::Value) -> bool {
+    matches!(
+        block.get("type").and_then(|v| v.as_str()),
+        Some("tool_use") | Some("tool_result") | Some("thinking")
+    )
+}
+
+/// 从 serde_json::Value 提取文本内容（仅提取用户输入和 AI 实际输出）
 fn extract_content_text(content: &serde_json::Value) -> String {
     match content {
-        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::String(s) => {
+            // 字符串可能是序列化后的 JSON 工具结果数组，尝试检测并过滤
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(s) {
+                if parsed.is_array() {
+                    return extract_content_text(&parsed);
+                }
+            }
+            // 如果是纯工具结果 JSON 字符串（以 [{" 开头），视为噪音
+            let trimmed = s.trim();
+            if trimmed.starts_with("[{") && (trimmed.contains("\"tool_use_id\"") || trimmed.contains("\"type\":\"tool_result\"") || trimmed.contains("\"type\":\"tool_use\"")) {
+                return String::new();
+            }
+            s.clone()
+        }
         serde_json::Value::Array(arr) => {
+            // 如果全部是工具交互块，整条消息视为噪音
+            if !arr.is_empty() && arr.iter().all(|b| is_noise_block(b)) {
+                return String::new();
+            }
             let parts: Vec<String> = arr
                 .iter()
                 .filter_map(|block| {
-                    // assistant 内容块: { "type": "text", "text": "..." }
-                    // 或 { "type": "thinking", "thinking": "..." }
-                    // 或 { "type": "tool_use", ... }
+                    if is_noise_block(block) {
+                        return None;
+                    }
+                    // 仅提取 text 类型内容块
                     block.get("text")
                         .and_then(|v| v.as_str())
-                        .or_else(|| block.get("thinking").and_then(|v| v.as_str()))
                         .map(|s| s.to_string())
                 })
                 .collect();
             if parts.is_empty() {
-                // 如果没有 text/thinking，序列化整个数组
-                serde_json::to_string(&arr).unwrap_or_default()
+                String::new()
             } else {
                 parts.join("\n")
             }
         }
-        _ => serde_json::to_string(content).unwrap_or_default(),
+        _ => String::new(),
     }
 }
 

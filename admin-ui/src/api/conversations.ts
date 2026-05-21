@@ -14,7 +14,11 @@ export async function fetchConversations(params?: {
   return res.data.data
 }
 
-export async function fetchConversationDetail(sessionId: string): Promise<{
+export async function fetchConversationDetail(
+  sessionId: string,
+  page = 1,
+  pageSize = 20,
+): Promise<{
   session: Session
   messages: Array<{
     id: number
@@ -26,7 +30,13 @@ export async function fetchConversationDetail(sessionId: string): Promise<{
     tokens_output: number | null
     created_at: string | null
   }>
+  total: number
+  page: number
+  page_size: number
 }> {
-  const res = await client.get<ApiResponse<any>>(`/admin/conversations/${sessionId}`)
+  const res = await client.get<ApiResponse<any>>(
+    `/admin/conversations/${sessionId}`,
+    { params: { page, page_size: pageSize } },
+  )
   return res.data.data
 }

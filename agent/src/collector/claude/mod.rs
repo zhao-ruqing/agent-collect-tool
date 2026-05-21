@@ -194,10 +194,22 @@ fn aggregate_conversation_events(session_id: &str, events: &[ConversationEvent])
                     continue;
                 };
 
-                // 跳过空内容（如纯 tool_use 的 assistant 消息）
+                // 检查消息内容是否全是工具交互块（tool_use/tool_result），是则整条跳过
+                if msg_block.content.is_array() {
+                    let arr = msg_block.content.as_array().unwrap();
+                    if !arr.is_empty() && arr.iter().all(|b| {
+                        matches!(
+                            b.get("type").and_then(|v| v.as_str()),
+                            Some("tool_use") | Some("tool_result")
+                        )
+                    }) {
+                        continue;
+                    }
+                }
+
+                // 跳过空内容消息（所有角色），纯工具调用的消息无实际对话文本
                 let content_text = event.content_text();
-                if content_text.is_empty() && msg_block.is_assistant() {
-                    // assistant 消息可能只有 tool_use 而没有 text，跳过
+                if content_text.is_empty() {
                     continue;
                 }
 

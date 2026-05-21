@@ -68,11 +68,14 @@ pub struct PaginatedList<T: Serialize> {
     pub page_size: u32,
 }
 
-/// 会话详情（含消息列表）
+/// 会话详情（含分页消息列表）
 #[derive(Debug, Serialize)]
 pub struct ConversationDetail {
     pub session: Session,
     pub messages: Vec<Message>,
+    pub total: i64,
+    pub page: u32,
+    pub page_size: u32,
 }
 
 /// Agent 详情
@@ -316,10 +319,11 @@ pub async fn get_daily_stats(
     })
 }
 
-/// 单个会话详情（含消息列表）
+/// 单个会话详情（含分页消息列表，按时间倒序）
 pub async fn get_conversation_detail(
     pool: &MySqlPool,
     session_id: &str,
+    params: &QueryParams,
 ) -> Result<ConversationDetail, crate::error::AppError> {
     let session: Session = sqlx::query_as("SELECT * FROM sessions WHERE id = ?")
         .bind(session_id)
@@ -327,14 +331,30 @@ pub async fn get_conversation_detail(
         .await?
         .ok_or_else(|| crate::error::AppError::NotFound("会话不存在".into()))?;
 
-    let messages: Vec<Message> = sqlx::query_as(
-        "SELECT * FROM messages WHERE session_id = ? ORDER BY id ASC",
+    // 仅统计有效的用户-AI对话消息，排除工具调用/系统消息等噪音
+    let (total,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM messages WHERE session_id = ? AND role IN ('user', 'assistant') AND content IS NOT NULL AND content != ''",
     )
     .bind(session_id)
+    .fetch_one(pool)
+    .await?;
+
+    let messages: Vec<Message> = sqlx::query_as(
+        "SELECT * FROM messages WHERE session_id = ? AND role IN ('user', 'assistant') AND content IS NOT NULL AND content != '' ORDER BY created_at DESC LIMIT ? OFFSET ?",
+    )
+    .bind(session_id)
+    .bind(params.limit())
+    .bind(params.offset())
     .fetch_all(pool)
     .await?;
 
-    Ok(ConversationDetail { session, messages })
+    Ok(ConversationDetail {
+        session,
+        messages,
+        total,
+        page: params.page(),
+        page_size: params.limit(),
+    })
 }
 
 /// Agent 列表（分页）

@@ -352,9 +352,9 @@ mod tests {
     #[test]
     fn test_extract_session_ids() {
         let entries = vec![
-            SessionEntry { id: Some("s1".into()), title: None, created_at: None, updated_at: None },
-            SessionEntry { id: Some("s2".into()), title: None, created_at: None, updated_at: None },
-            SessionEntry { id: None, title: None, created_at: None, updated_at: None },
+            SessionEntry { id: Some("s1".into()), title: None, created_at: None, updated_at: None, is_current: false },
+            SessionEntry { id: Some("s2".into()), title: None, created_at: None, updated_at: None, is_current: false },
+            SessionEntry { id: None, title: None, created_at: None, updated_at: None, is_current: false },
         ];
         let ids = extract_session_ids(&entries);
         assert_eq!(ids, vec!["s1", "s2"]);

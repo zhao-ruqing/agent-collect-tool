@@ -31,12 +31,13 @@ pub async fn list_conversations(
     }
 }
 
-/// GET /api/v1/admin/conversations/:session_id
+/// GET /api/v1/admin/conversations/:session_id?page=1&page_size=20
 pub async fn get_conversation_detail(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
+    Query(params): Query<QueryParams>,
 ) -> impl IntoResponse {
-    match admin::get_conversation_detail(&state.pool, &session_id).await {
+    match admin::get_conversation_detail(&state.pool, &session_id, &params).await {
         Ok(detail) => Json(json!({ "code": 0, "data": detail })).into_response(),
         Err(e) => e.into_response(),
     }
