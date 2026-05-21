@@ -76,14 +76,23 @@ Vue3 权限分离管理后台
 
 ## 采集数据
 
-对 **Claude Code CLI** 和 **Trae** 进行静默元信息采集：
+对 **Claude Code CLI** 和 **Trae IDE** 进行静默元信息采集：
 
-- 对话统计：每日对话次数、模型、token 消耗
-- 代码变更：修改文件、diff 骨架、编辑类型
-- 代码接受：接受/拒绝/修改等行为事件
-- 会话上下文：项目路径（脱敏）、Git 分支、工具版本
+| 数据类别 | Claude Code | Trae | 说明 |
+|---------|:---:|:---:|------|
+| 对话统计（次数/模型/tokens） | ✓ | △ | Trae 无精确 token 数，从模型+轮次估算 |
+| 用户输入内容 | ✓ | ✓ | 从日志 / vscdb input-history 提取 |
+| 助手回复内容 | ✓ | ✗ | Trae 仅云端存储，本地未留存 |
+| 代码变更（diff skeleton） | ✓ | ✓ | 从 Git 快照 `before→after` tag diff 提取 |
+| 代码接受/拒绝行为 | ✓ | △ | 从 toolcall tag 推断，无显式 accept/reject 标记 |
+| 项目路径（脱敏） | ✓ | ✓ | 从 session / workspace.json 获取 |
+| Git 分支 | ✓ | ✗ | 快照为独立 Git 仓库，无源仓库分支信息 |
+| 会话元信息（agent/模型） | ✓ | ✓ | 从 vscdb session map 获取 |
 
-> 已验证的 Claude Code 数据源详见 [DEVELOPMENT-PLAN.md](docs/DEVELOPMENT-PLAN.md) Phase 2.2
+**Claude Code 数据源：** `~/.claude/history.jsonl` + `sessions/*.json` + `projects/<hash>/*.jsonl`  
+**Trae 数据源：** `%APPDATA%/Trae/User/workspaceStorage/<hash>/state.vscdb`（SQLite K-V 库）+ `ModularData/ai-agent/snapshot/<sessionId>/`（Git 快照）
+
+> 详细数据源格式和逆向分析见 [DEVELOPMENT-PLAN.md](docs/DEVELOPMENT-PLAN.md) Phase 2.2（Claude Code）和 Phase 2.4（Trae）
 
 ---
 

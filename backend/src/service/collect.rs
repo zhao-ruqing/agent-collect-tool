@@ -29,6 +29,7 @@ pub struct SessionPayload {
     pub ended_at: Option<String>,
     pub version: Option<String>,
     pub status: Option<String>,
+    pub tool: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -41,6 +42,7 @@ pub struct ConversationPayload {
     pub ended_at: Option<String>,
     pub messages: Vec<MessagePayload>,
     pub model: Option<String>,
+    pub tool: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -178,6 +180,7 @@ async fn process_session(pool: &MySqlPool, agent_id: &str, sess: &SessionPayload
         agent_id,
         &project_path_hash,
         sess.cwd.as_deref(), // git_branch 从 cwd 获取（后续可改进）
+        sess.tool.as_deref(),
         started_at,
         ended_at,
     )
@@ -214,6 +217,7 @@ async fn process_conversation(pool: &MySqlPool, agent_id: &str, conv: &Conversat
         agent_id,
         &project_path_hash,
         conv.git_branch.as_deref(),
+        conv.tool.as_deref(),
         started_at,
         ended_at,
     )

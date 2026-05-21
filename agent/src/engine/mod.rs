@@ -166,7 +166,7 @@ impl Engine {
                     .collect();
 
                 let max_seq = entries.last().map(|e| e.seq).unwrap_or(0);
-                let event_count = events.len();
+                let _event_count = events.len();
 
                 match self.reporter.report(events).await {
                     Ok(count) if count > 0 => {

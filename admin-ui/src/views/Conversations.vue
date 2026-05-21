@@ -7,6 +7,14 @@
       </div>
       <div class="panel-body">
         <div class="filter-row">
+          <div class="filter-item filter-item--tool">
+            <label class="filter-label">AI 工具</label>
+            <el-select v-model="filters.toolType" placeholder="全部" clearable @change="handleSearch">
+              <el-option label="全部" value="" />
+              <el-option label="Claude Code" value="claude-code" />
+              <el-option label="Trae" value="trae" />
+            </el-select>
+          </div>
           <div class="filter-item filter-item--keyword">
             <label class="filter-label">搜索</label>
             <el-input
@@ -58,6 +66,13 @@
             <span class="text-mono">{{ row.id }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="AI 工具" width="110">
+          <template #default="{ row }">
+            <el-tag :type="row.tool_type === 'claude-code' ? '' : 'warning'" size="small" effect="dark">
+              {{ toolLabel(row.tool_type) }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="Git 分支" min-width="160">
           <template #default="{ row }">
             <span class="text-mono">{{ row.git_branch || '—' }}</span>
@@ -104,7 +119,7 @@ import type { Session } from '../types'
 
 const router = useRouter()
 const loading = ref(false)
-const filters = reactive({ dateRange: null as [string, string] | null, keyword: '' })
+const filters = reactive({ dateRange: null as [string, string] | null, keyword: '', toolType: '' })
 const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const tableData = ref<Session[]>([])
 
@@ -113,12 +128,19 @@ function formatTime(iso: string | null | undefined): string {
   return new Date(iso).toLocaleString('zh-CN', { hour12: false })
 }
 
+function toolLabel(t: string | null | undefined): string {
+  if (t === 'claude-code') return 'Claude'
+  if (t === 'trae') return 'Trae'
+  return t || '—'
+}
+
 async function handleSearch() {
   loading.value = true
   try {
     const params: Record<string, unknown> = { page: pagination.page, page_size: pagination.pageSize }
     if (filters.dateRange) { params.date_from = filters.dateRange[0]; params.date_to = filters.dateRange[1] }
     if (filters.keyword) params.keyword = filters.keyword
+    if (filters.toolType) params.tool_type = filters.toolType
     const res = await fetchConversations(params as any)
     tableData.value = res.list || []
     pagination.total = res.total || 0
@@ -131,7 +153,7 @@ function goDetail(sessionId: string) {
 }
 
 function handleReset() {
-  filters.dateRange = null; filters.keyword = ''; pagination.page = 1
+  filters.dateRange = null; filters.keyword = ''; filters.toolType = ''; pagination.page = 1
   handleSearch()
 }
 
@@ -165,6 +187,7 @@ onMounted(() => handleSearch())
   display: block; font-size: 11px; color: var(--c-text-muted);
   text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;
 }
+.filter-item--tool { flex-shrink: 0; width: 150px; }
 .filter-item--keyword { flex: 1; min-width: 220px; }
 .filter-item--date { flex-shrink: 0; }
 .filter-item--actions { flex-shrink: 0; }

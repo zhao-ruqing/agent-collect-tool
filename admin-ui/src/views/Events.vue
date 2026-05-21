@@ -1,5 +1,24 @@
 <template>
   <div class="page-view">
+    <!-- 筛选栏 -->
+    <div class="panel filter-panel">
+      <div class="panel-header">
+        <h3 class="panel-title">筛选条件</h3>
+      </div>
+      <div class="panel-body">
+        <div class="filter-row">
+          <div class="filter-item">
+            <label class="filter-label">AI 工具</label>
+            <el-select v-model="filters.toolType" placeholder="全部" clearable @change="loadData" style="width: 160px">
+              <el-option label="全部" value="" />
+              <el-option label="Claude Code" value="claude-code" />
+              <el-option label="Trae" value="trae" />
+            </el-select>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="panel">
       <div class="panel-header">
         <h3 class="panel-title">行为事件</h3>
@@ -55,6 +74,7 @@ import client from '../api/client'
 import type { ActionEventItem } from '../types'
 
 const loading = ref(false)
+const filters = reactive({ toolType: '' })
 const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const tableData = ref<ActionEventItem[]>([])
 
@@ -68,7 +88,9 @@ function eventLabel(type: string): string {
 async function loadData() {
   loading.value = true
   try {
-    const res = await client.get('/admin/events', { params: { page: pagination.page, page_size: pagination.pageSize } })
+    const params: Record<string, unknown> = { page: pagination.page, page_size: pagination.pageSize }
+    if (filters.toolType) params.tool_type = filters.toolType
+    const res = await client.get('/admin/events', { params })
     const payload = res.data?.data
     tableData.value = payload?.list || []
     pagination.total = payload?.total || 0
@@ -81,6 +103,11 @@ onMounted(() => loadData())
 
 <style scoped>
 .page-view { animation: fadeInUp 0.45s ease both; }
+/* Filter */
+.filter-panel { margin-bottom: 18px; }
+.panel-body { padding: 16px 20px; }
+.filter-row { display: flex; align-items: flex-end; gap: 20px; }
+.filter-label { display: block; font-size: 11px; color: var(--c-text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
 .panel {
   background: var(--c-bg-card); border: 1px solid var(--c-border);
   border-radius: var(--radius-lg); backdrop-filter: blur(12px);

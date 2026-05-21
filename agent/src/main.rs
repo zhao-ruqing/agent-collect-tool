@@ -227,11 +227,28 @@ async fn run_foreground() -> Result<()> {
 
     let mut engine = Engine::new(engine_config, Box::new(http_reporter), queue_path)?;
 
-    // 注册采集器
+    // 注册 Claude Code 采集器
     if config.tools.iter().any(|t| t == "claude-code" || t == "claude") {
         use crate::collector::claude::ClaudeCodeCollector;
         let claude_collector = ClaudeCodeCollector::from_config(config.claude_history_path.clone())?;
         engine.register_collector(Box::new(claude_collector));
+    }
+
+    // 注册 Trae 采集器
+    if config.tools.iter().any(|t| t == "trae") {
+        use crate::collector::trae::TraeCollector;
+        use crate::collector::Collector;
+        use std::path::PathBuf;
+        let trae_collector = if let Some(ref dir) = config.trae_data_dir {
+            TraeCollector::new(PathBuf::from(dir))
+        } else {
+            TraeCollector::new_with_default_path()?
+        };
+        if trae_collector.is_installed() {
+            engine.register_collector(Box::new(trae_collector));
+        } else {
+            log::info!("Trae 未安装，跳过 Trae 采集器注册");
+        }
     }
 
     log::info!("开始采集主循环...");

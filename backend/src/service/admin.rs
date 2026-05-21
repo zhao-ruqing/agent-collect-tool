@@ -10,7 +10,9 @@ pub struct QueryParams {
     pub page_size: Option<u32>,
     /// 按 agent_id 筛选
     pub agent_id: Option<String>,
-    /// 按工具筛选 (用于 action_events 表 event_type)
+    /// 按 AI 工具筛选 (sessions.tool_type: claude-code / trae)
+    pub tool_type: Option<String>,
+    /// 按事件类型筛选 (用于 action_events 表 event_type)
     pub tool: Option<String>,
     /// 按模型筛选 (用于 messages 表)
     pub model: Option<String>,
@@ -88,45 +90,72 @@ pub struct AgentStats {
     pub total_edits: i64,
 }
 
-/// 仪表盘统计
-pub async fn get_dashboard_stats(pool: &MySqlPool) -> Result<DashboardStats, crate::error::AppError> {
+/// 仪表盘统计，支持按 tool_type 筛选
+pub async fn get_dashboard_stats(pool: &MySqlPool, params: &QueryParams) -> Result<DashboardStats, crate::error::AppError> {
     let total_agents: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM agents")
         .fetch_one(pool)
         .await?;
 
-    let total_sessions: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM sessions")
-        .fetch_one(pool)
-        .await?;
+    // 动态构建 tool_type 条件（sessions 表直接筛选，子表需 JOIN）
+    let has_tt = params.tool_type.is_some();
+    let tt_val = params.tool_type.clone().unwrap_or_default();
 
-    let today_sessions: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM sessions WHERE DATE(started_at) = CURDATE()")
-            .fetch_one(pool)
-            .await?;
+    let (sess_cond, sess_vals) = if has_tt {
+        (" WHERE tool_type = ?".to_string(), vec![tt_val.clone()])
+    } else {
+        (String::new(), vec![])
+    };
 
-    let total_messages: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM messages")
-        .fetch_one(pool)
-        .await?;
+    let total_sessions_sql = format!("SELECT COUNT(*) FROM sessions{}", sess_cond);
+    let mut q = sqlx::query_as(&total_sessions_sql);
+    for val in &sess_vals { q = q.bind(val); }
+    let total_sessions: (i64,) = q.fetch_one(pool).await?;
 
-    let total_edits: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM code_edits")
-        .fetch_one(pool)
-        .await?;
+    let today_cond = if has_tt {
+        "WHERE tool_type = ? AND DATE(started_at) = CURDATE()".to_string()
+    } else {
+        "WHERE DATE(started_at) = CURDATE()".to_string()
+    };
+    let today_sql = format!("SELECT COUNT(*) FROM sessions {}", today_cond);
+    let mut q = sqlx::query_as(&today_sql);
+    for val in &sess_vals { q = q.bind(val); }
+    let today_sessions: (i64,) = q.fetch_one(pool).await?;
 
-    let recent_sessions = sqlx::query_as::<_, Session>(
-        "SELECT * FROM sessions ORDER BY started_at DESC LIMIT 10",
-    )
-    .fetch_all(pool)
-    .await?;
+    let total_messages_sql = if has_tt {
+        "SELECT COUNT(*) FROM messages JOIN sessions s ON messages.session_id = s.id WHERE s.tool_type = ?"
+    } else {
+        "SELECT COUNT(*) FROM messages"
+    };
+    let mut q = sqlx::query_as(total_messages_sql);
+    for val in &sess_vals { q = q.bind(val); }
+    let total_messages: (i64,) = q.fetch_one(pool).await?;
 
-    // 近 7 天每日会话趋势
-    let daily_trend: Vec<DailyTrendItem> = sqlx::query_as::<_, DailyTrendItem>(
-        r#"SELECT DATE(started_at) as date, COUNT(*) as count
-           FROM sessions
-           WHERE started_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
-           GROUP BY DATE(started_at)
-           ORDER BY date"#,
-    )
-    .fetch_all(pool)
-    .await?;
+    let total_edits_sql = if has_tt {
+        "SELECT COUNT(*) FROM code_edits JOIN sessions s ON code_edits.session_id = s.id WHERE s.tool_type = ?"
+    } else {
+        "SELECT COUNT(*) FROM code_edits"
+    };
+    let mut q = sqlx::query_as(total_edits_sql);
+    for val in &sess_vals { q = q.bind(val); }
+    let total_edits: (i64,) = q.fetch_one(pool).await?;
+
+    let recent_sessions_sql = format!("SELECT * FROM sessions{} ORDER BY started_at DESC LIMIT 10", sess_cond);
+    let mut q = sqlx::query_as::<_, Session>(&recent_sessions_sql);
+    for val in &sess_vals { q = q.bind(val); }
+    let recent_sessions = q.fetch_all(pool).await?;
+
+    let trend_cond = if has_tt {
+        "WHERE tool_type = ? AND started_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)"
+    } else {
+        "WHERE started_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)"
+    };
+    let daily_trend_sql = format!(
+        "SELECT DATE(started_at) as date, COUNT(*) as count FROM sessions {} GROUP BY DATE(started_at) ORDER BY date",
+        trend_cond
+    );
+    let mut q = sqlx::query_as::<_, DailyTrendItem>(&daily_trend_sql);
+    for val in &sess_vals { q = q.bind(val); }
+    let daily_trend = q.fetch_all(pool).await?;
 
     Ok(DashboardStats {
         total_agents: total_agents.0,
@@ -176,17 +205,17 @@ pub async fn list_conversations(
     })
 }
 
-/// 代码编辑列表，支持按时间范围 / agent_id 筛选
+/// 代码编辑列表，支持按时间范围 / agent_id / tool_type 筛选
 pub async fn list_code_edits(
     pool: &MySqlPool,
     params: &QueryParams,
 ) -> Result<PaginatedList<CodeEdit>, crate::error::AppError> {
-    let (where_clause, bind_values) = build_edit_filter(params);
+    let (where_clause, join_clause, bind_values) = build_edit_filter(params);
 
-    let count_sql = format!("SELECT COUNT(*) FROM code_edits{}", where_clause);
+    let count_sql = format!("SELECT COUNT(*) FROM code_edits{}{}", join_clause, where_clause);
     let list_sql = format!(
-        "SELECT * FROM code_edits{} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        where_clause
+        "SELECT code_edits.* FROM code_edits{}{} ORDER BY code_edits.created_at DESC LIMIT ? OFFSET ?",
+        join_clause, where_clause
     );
 
     let mut count_query = sqlx::query_as(&count_sql);
@@ -213,17 +242,17 @@ pub async fn list_code_edits(
     })
 }
 
-/// 行为事件列表，支持按时间范围 / 事件类型筛选
+/// 行为事件列表，支持按时间范围 / 事件类型 / tool_type 筛选
 pub async fn list_action_events(
     pool: &MySqlPool,
     params: &QueryParams,
 ) -> Result<PaginatedList<ActionEvent>, crate::error::AppError> {
-    let (where_clause, bind_values) = build_action_filter(params);
+    let (where_clause, join_clause, bind_values) = build_action_filter(params);
 
-    let count_sql = format!("SELECT COUNT(*) FROM action_events{}", where_clause);
+    let count_sql = format!("SELECT COUNT(*) FROM action_events{}{}", join_clause, where_clause);
     let list_sql = format!(
-        "SELECT * FROM action_events{} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        where_clause
+        "SELECT action_events.* FROM action_events{}{} ORDER BY action_events.created_at DESC LIMIT ? OFFSET ?",
+        join_clause, where_clause
     );
 
     let mut count_query = sqlx::query_as(&count_sql);
@@ -384,7 +413,7 @@ pub async fn get_agent_detail(
     })
 }
 
-/// CSV 导出：查询 sessions + messages 汇总数据
+/// CSV 导出：查询 sessions + messages 汇总数据，支持按 tool_type 筛选
 pub async fn export_csv(
     pool: &MySqlPool,
     params: &QueryParams,
@@ -395,6 +424,10 @@ pub async fn export_csv(
     if let Some(ref agent_id) = params.agent_id {
         conditions.push("s.agent_id = ?");
         bind_values.push(agent_id.clone());
+    }
+    if let Some(ref tool_type) = params.tool_type {
+        conditions.push("s.tool_type = ?");
+        bind_values.push(tool_type.clone());
     }
     if let Some(ref date_from) = params.date_from {
         conditions.push("s.started_at >= ?");
@@ -412,7 +445,7 @@ pub async fn export_csv(
     };
 
     let sql = format!(
-        r#"SELECT s.id, s.agent_id, s.project_path_hash, s.git_branch,
+        r#"SELECT s.id, s.agent_id, s.project_path_hash, s.git_branch, s.tool_type,
                   s.started_at, s.ended_at,
                   COUNT(m.id) as msg_count,
                   COALESCE(SUM(m.tokens_input), 0) as total_input,
@@ -437,6 +470,7 @@ pub async fn export_csv(
         agent_id: String,
         project_path_hash: Option<String>,
         git_branch: Option<String>,
+        tool_type: Option<String>,
         started_at: chrono::DateTime<chrono::Utc>,
         ended_at: Option<chrono::DateTime<chrono::Utc>>,
         msg_count: i64,
@@ -446,14 +480,15 @@ pub async fn export_csv(
 
     let rows: Vec<ExportRow> = query.fetch_all(pool).await?;
 
-    let mut csv = String::from("会话ID,客户端ID,项目哈希,分支,开始时间,结束时间,消息数,输入Token,输出Token\n");
+    let mut csv = String::from("会话ID,客户端ID,项目哈希,分支,AI工具,开始时间,结束时间,消息数,输入Token,输出Token\n");
     for r in rows {
         csv.push_str(&format!(
-            "{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{}\n",
             r.id,
             r.agent_id,
             r.project_path_hash.as_deref().unwrap_or(""),
             r.git_branch.as_deref().unwrap_or(""),
+            r.tool_type.as_deref().unwrap_or(""),
             r.started_at.format("%Y-%m-%d %H:%M:%S"),
             r.ended_at.map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_default(),
             r.msg_count,
@@ -476,6 +511,10 @@ fn build_session_filter(params: &QueryParams) -> (String, Vec<String>) {
     if let Some(ref agent_id) = params.agent_id {
         conditions.push("agent_id = ?".to_string());
         values.push(agent_id.clone());
+    }
+    if let Some(ref tool_type) = params.tool_type {
+        conditions.push("tool_type = ?".to_string());
+        values.push(tool_type.clone());
     }
     if let Some(ref keyword) = params.keyword {
         let kw = keyword.trim();
@@ -503,10 +542,16 @@ fn build_session_filter(params: &QueryParams) -> (String, Vec<String>) {
     (clause, values)
 }
 
-fn build_edit_filter(params: &QueryParams) -> (String, Vec<String>) {
+fn build_edit_filter(params: &QueryParams) -> (String, String, Vec<String>) {
     let mut conditions = Vec::new();
     let mut values: Vec<String> = Vec::new();
+    let mut join = String::new();
 
+    if let Some(ref tool_type) = params.tool_type {
+        join = " JOIN sessions s ON code_edits.session_id = s.id".to_string();
+        conditions.push("s.tool_type = ?".to_string());
+        values.push(tool_type.clone());
+    }
     if let Some(ref date_from) = params.date_from {
         conditions.push("created_at >= ?".to_string());
         values.push(date_from.clone());
@@ -521,13 +566,19 @@ fn build_edit_filter(params: &QueryParams) -> (String, Vec<String>) {
     } else {
         format!(" WHERE {}", conditions.join(" AND "))
     };
-    (clause, values)
+    (clause, join, values)
 }
 
-fn build_action_filter(params: &QueryParams) -> (String, Vec<String>) {
+fn build_action_filter(params: &QueryParams) -> (String, String, Vec<String>) {
     let mut conditions = Vec::new();
     let mut values: Vec<String> = Vec::new();
+    let mut join = String::new();
 
+    if let Some(ref tool_type) = params.tool_type {
+        join = " JOIN sessions s ON action_events.session_id = s.id".to_string();
+        conditions.push("s.tool_type = ?".to_string());
+        values.push(tool_type.clone());
+    }
     if let Some(ref tool) = params.tool {
         conditions.push("event_type = ?".to_string());
         values.push(tool.clone());
@@ -546,7 +597,7 @@ fn build_action_filter(params: &QueryParams) -> (String, Vec<String>) {
     } else {
         format!(" WHERE {}", conditions.join(" AND "))
     };
-    (clause, values)
+    (clause, join, values)
 }
 
 fn build_daily_filter(params: &QueryParams) -> (String, Vec<String>) {

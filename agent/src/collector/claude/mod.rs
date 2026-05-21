@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use conversation::{ConversationEvent, ConversationParser};
 use history::HistoryParser;
 use crate::collector::{
-    ActionEvent, ActionType, CodeEditRecord, Collector, ConversationRecord, EditType,
+    CodeEditRecord, Collector, ConversationRecord, EditType,
     MessageRecord, MessageRole, RawEvent, SessionRecord, SessionStatus, ToolType,
 };
 
@@ -111,6 +111,7 @@ impl Collector for ClaudeCodeCollector {
                     ended_at: None,
                     version: None,
                     status: SessionStatus::Active,
+                    tool: ToolType::ClaudeCode,
                 };
                 events.push(RawEvent::Session(session));
             }
@@ -132,6 +133,7 @@ impl Collector for ClaudeCodeCollector {
                         Some("abandoned") => SessionStatus::Abandoned,
                         _ => SessionStatus::Active,
                     },
+                    tool: ToolType::ClaudeCode,
                 };
                 events.push(RawEvent::Session(session));
             }

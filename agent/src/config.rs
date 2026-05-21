@@ -23,6 +23,9 @@ pub struct AgentConfig {
     #[serde(default = "default_tools")]
     pub tools: Vec<String>,
     pub claude_history_path: Option<String>,
+    /// Trae 用户数据目录（可选，默认 %APPDATA%/Trae/User）
+    #[serde(default)]
+    pub trae_data_dir: Option<String>,
     /// API 签名密钥（与后端 AGENT_API_SECRET 一致）
     #[serde(default)]
     pub api_secret: String,

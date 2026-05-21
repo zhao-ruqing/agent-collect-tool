@@ -26,6 +26,9 @@ lru = "0.12"
 flate2 = "1.0"
 async-trait = "0.1"
 dirs = "5.0"
+rusqlite = { version = "0.31", features = ["bundled"] }
+git2 = "0.19"
+urlencoding = "2.1"
 
 [dev-dependencies]
 tempfile = "3.10"

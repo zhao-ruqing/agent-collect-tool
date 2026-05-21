@@ -8,6 +8,7 @@ export async function fetchConversations(params?: {
   date_to?: string
   keyword?: string
   agent_id?: string
+  tool_type?: string
 }): Promise<PaginatedList<Session>> {
   const res = await client.get<ApiResponse<PaginatedList<Session>>>('/admin/conversations', { params })
   return res.data.data
@@ -19,6 +20,7 @@ export async function fetchConversationDetail(sessionId: string): Promise<{
     id: number
     role: string
     content_hash: string | null
+    content: string | null
     model: string | null
     tokens_input: number | null
     tokens_output: number | null

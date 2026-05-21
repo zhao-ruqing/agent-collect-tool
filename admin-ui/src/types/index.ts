@@ -16,6 +16,7 @@ export interface Session {
   agent_id: string
   project_path_hash: string | null
   git_branch: string | null
+  tool_type: string | null
   started_at: string
   ended_at: string | null
 }
@@ -25,6 +26,7 @@ export interface Message {
   session_id: string
   role: 'user' | 'assistant'
   content_hash: string | null
+  content: string | null
   model: string | null
   tokens_input: number | null
   tokens_output: number | null

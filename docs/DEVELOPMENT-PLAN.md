@@ -264,6 +264,118 @@ agent/src/collector/
 
 ---
 
+### 2.4 Trae 数据采集器
+
+**目标：** 实现 Trae IDE 的 AI 对话数据采集，从 workspaceStorage 的 state.vscdb（SQLite Key-Value 库）中增量提取会话元信息。
+
+**数据源说明：**
+
+```
+C:\Users\<user>\AppData\Roaming\Trae\User\
+├── workspaceStorage/
+│   └── <hash>/                      # 每个工作区一个目录
+│       ├── state.vscdb              # SQLite K-V 数据库（核心数据源）
+│       ├── state.vscdb.backup       # 备份文件
+│       └── workspace.json           # 项目路径映射（如: file:///d%3A/Project/xxx）
+└── globalStorage/
+    ├── state.vscdb                  # 全局 K-V 数据库（模型配置等）
+    └── storage.json                 # 全局存储元信息
+```
+
+**state.vscdb 中可采集的 AI 相关 Key：**
+
+| Key | 内容 | 采集用途 |
+|-----|------|---------|
+| `memento/icube-ai-agent-storage` | 会话列表 + sessionId | 获取所有历史会话 ID 列表 |
+| `icube_session_agent_map` | sessionId → agent 类型映射 | 分辨 builder / dev_agent / solo_agent |
+| `{userId}_ai-chat:sessionRelation:modelMap` | sessionId → 模型名映射 | 获取每会话使用的模型 |
+| `icube-ai-agent-storage-input-history` | 用户输入历史（含文本 + 文件引用） | 提取 user prompt 文本和引用文件路径 |
+| `ChatStore` | UI 状态（对话轮次高度等） | 辅助统计对话轮次数 |
+| `currentAgentData_{userId}` | 当前 Agent 配置 | 获取 Agent 名称、类型、工具列表 |
+| `workspace.json`（独立文件） | 项目文件夹路径 | 获取项目路径信息 |
+
+**可采集字段 vs Claude Code 对比：**
+
+| 字段 | Claude Code 采集 | Trae 采集 | 说明 |
+|------|:---:|:---:|------|
+| 对话统计（daily_count/model/tokens） | ✓ | △ | Trae 无精确 token 统计，可从模型+轮次估算 |
+| 用户输入内容 | ✓ | ✓ | 从 input-history 提取 |
+| 助手回复内容 | ✓ | ✗ | Trae 仅云端存储，本地未留存 |
+| 代码变更（diff skeleton） | ✓ | ✓ | 从 Git 快照 before→after tag diff 提取 |
+| 代码接受/拒绝行为 | ✓ | △ | 从 toolcall tag 推断文件变更，无显式 accept/reject 标记 |
+| 项目路径 | ✓ | ✓ | 从 workspace.json 获取 |
+| 会话记录（session 元信息） | ✓ | ✓ | sessionId / agent 类型 / 模型 |
+| Git 分支 | ✓ | ✗ | 快照为独立 Git 仓库，无源仓库分支信息 |
+
+**文件列表：**
+```
+agent/src/collector/
+├── trae.rs                          # TraeCollector struct + Collector trait 实现
+└── trae/
+    ├── mod.rs                       # 子模块入口
+    ├── workspace.rs                 # workspaceStorage 目录遍历 + 工作区发现
+    ├── vscdb.rs                     # state.vscdb 增量读取（SQLite K-V 查询）
+    ├── snapshot.rs                  # Git 快照解析（tags diff 提取代码变更）
+    └── parser.rs                    # JSON 数据解析 + 标准化为 RawEvent
+```
+
+**具体步骤：**
+1. 实现 `trae/workspace.rs`：
+   - `discover_workspaces(base_dir: &Path) -> Result<Vec<WorkspaceInfo>>`
+   - 遍历 `workspaceStorage/` 下所有目录，读取 `workspace.json` 获取项目路径
+   - `WorkspaceInfo { hash: String, project_path: String, vscdb_path: PathBuf, snapshot_path: PathBuf }`
+   - 过滤：只返回 vscdb 存在且最近 N 天有修改的工作区
+2. 实现 `trae/vscdb.rs`：
+   - `VscDbReader` struct 持有 `rusqlite::Connection` + 各 key 的 `last_read_timestamp`
+   - 使用 `rusqlite` crate 读取 SQLite 数据库（只读模式，不影响 Trae 正常运行）
+   - `read_key_incremental(key: &str) -> Result<Vec<u8>>` — 读取指定 key 的 value
+   - 比较 value 的修改时间戳判断是否有新数据
+   - 出错时（数据库被 Trae 锁定）直接返回空，不影响其他采集
+3. 实现 `trae/snapshot.rs`：
+   - `SnapshotReader` struct，使用 `git2` crate 打开 snapshot Git 仓库
+   - `list_chain_tags(repo: &Repository) -> Result<Vec<TagInfo>>` — 列出 `chain-start-*` / `before-chat-turn-*` / `after-chat-turn-*` / `toolcall-*` tags
+   - `get_turn_diff(repo: &Repository, before_tag: &str, after_tag: &str) -> Result<DiffSkeleton>` — 获取单轮对话的代码变更
+   - `get_toolcall_files(repo: &Repository, tag: &str) -> Result<Vec<ChangedFile>>` — 获取单次工具调用的变更文件列表
+   - 增量：通过 sled 记录已处理的 tag 列表，仅处理新 tag
+   - 出错时（仓库损坏/不存在）返回空，warn 日志
+4. 实现 `trae/parser.rs`：
+   - `parse_session_list(value: &[u8]) -> Result<Vec<SessionMeta>>` — 解析会话列表
+   - `parse_session_agent_map(value: &[u8]) -> Result<HashMap<String, String>>` — 解析会话→Agent 映射
+   - `parse_model_map(value: &[u8]) -> Result<HashMap<String, HashMap<String, String>>>` — 解析会话→模型映射
+   - `parse_input_history(value: &[u8]) -> Result<Vec<UserInput>>` — 解析用户输入历史
+   - `parse_agent_data(value: &[u8]) -> Result<AgentInfo>` — 解析当前 Agent 配置
+   - `parse_workspace_json(path: &Path) -> Result<String>` — 解析 workspace.json 获取项目路径
+   - 所有解析函数返回标准化的 `RawEvent`（Conversation / CodeEdit / Session）
+5. 实现 `trae.rs` — `TraeCollector`：
+   - 实现 `Collector` trait
+   - `name()` → `"trae"`
+   - `is_installed()` — 检查 Trae 数据目录是否存在
+   - `is_running()` — sysinfo 检测进程名包含 "Trae" 的进程
+   - `collect_incremental()` — 遍历所有工作区 → 读取 vscdb → 解析 snapshot → 生成 RawEvent
+   - 内部维护 `TraeCursor { workspace_hashes: HashMap<String, WorkspaceCursor> }` 持久化到 sled
+   - 每个工作区的 cursor 记录 vscdb 各 key 和 snapshot tags 的最后读取状态
+6. 注册到 Engine：
+   - `ToolType::Trae` 已在枚举中定义，无需修改
+   - Engine 根据 config.tools 配置创建 TraeCollector 实例
+7. 准备测试 fixtures：
+   - `agent/tests/fixtures/trae/state_sample.vscdb` — 模拟 vscdb 数据
+   - `agent/tests/fixtures/trae/workspace_sample.json` — 模拟 workspace.json
+   - `agent/tests/fixtures/trae/snapshot_sample/` — 模拟 Git 快照仓库（含 tags）
+
+**依赖变更：**
+- `agent/Cargo.toml` 添加 `rusqlite = { version = "0.31", features = ["bundled"] }`（bundled 模式，静态链接 SQLite，不依赖系统库）
+- `agent/Cargo.toml` 添加 `git2 = { version = "0.18" }`（git 快照解析，读取 snapshot tags 和 diff）
+
+**验收标准：**
+- `cargo test` 所有单测通过，覆盖率 ≥ 80%
+- 用本机真实 Trae 数据目录测试，正确解析出会话记录 + 用户输入 + 代码 diff
+- 增量解析正确（连续两次调用不返回重复数据）
+- Git 快照增量提取：仅处理新 tags，不重复生成同一条 diff
+- 数据库被 Trae 锁定时不会崩溃（空返回 + warn 日志）
+- 不修改 vscdb 文件和 snapshot 仓库（只读模式）
+
+---
+
 ## Phase 3：Agent 核心 — 上报 & 服务化（预计 2～3 天）
 
 ### 3.1 去重 & 聚合引擎

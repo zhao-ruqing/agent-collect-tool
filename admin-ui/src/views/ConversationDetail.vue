@@ -31,6 +31,14 @@
             <span class="info-value text-mono">{{ detail.session.agent_id }}</span>
           </div>
           <div class="info-item">
+            <span class="info-label">AI 工具</span>
+            <span class="info-value">
+              <el-tag :type="detail.session.tool_type === 'claude-code' ? '' : 'warning'" size="small" effect="dark">
+                {{ toolLabel(detail.session.tool_type) }}
+              </el-tag>
+            </span>
+          </div>
+          <div class="info-item">
             <span class="info-label">Git 分支</span>
             <span class="info-value text-mono">{{ detail.session.git_branch || '—' }}</span>
           </div>
@@ -144,6 +152,11 @@ function formatTime(iso: string): string {
   if (!iso) return '—'
   return new Date(iso).toLocaleString('zh-CN', { hour12: false })
 }
+function toolLabel(t: string | null | undefined): string {
+  if (t === 'claude-code') return 'Claude'
+  if (t === 'trae') return 'Trae'
+  return t || '—'
+}
 
 onMounted(async () => {
   const sessionId = route.params.sessionId as string
@@ -181,7 +194,7 @@ onMounted(async () => {
 .panel-body { padding: 20px; }
 
 /* Info Grid */
-.info-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.info-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
 .info-item { display: flex; flex-direction: column; gap: 4px; }
 .info-label { font-size: 11px; color: var(--c-text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
 .info-value { font-size: 13px; color: var(--c-text); word-break: break-all; }

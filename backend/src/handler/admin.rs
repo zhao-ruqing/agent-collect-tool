@@ -9,11 +9,12 @@ use crate::router::AppState;
 use crate::service::admin::{self, QueryParams};
 use std::sync::Arc;
 
-/// GET /api/v1/admin/dashboard
+/// GET /api/v1/admin/dashboard?tool_type=claude-code
 pub async fn get_dashboard_stats(
     State(state): State<Arc<AppState>>,
+    Query(params): Query<QueryParams>,
 ) -> impl IntoResponse {
-    match admin::get_dashboard_stats(&state.pool).await {
+    match admin::get_dashboard_stats(&state.pool, &params).await {
         Ok(stats) => Json(json!({ "code": 0, "data": stats })).into_response(),
         Err(e) => e.into_response(),
     }

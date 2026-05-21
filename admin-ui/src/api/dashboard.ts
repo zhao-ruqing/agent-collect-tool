@@ -1,8 +1,10 @@
 import client from './client'
 import type { ApiResponse, DashboardStats, PaginatedList, DailyStat } from '../types'
 
-export async function fetchDashboardStats(): Promise<DashboardStats> {
-  const res = await client.get<ApiResponse<DashboardStats>>('/admin/dashboard')
+export async function fetchDashboardStats(params?: {
+  tool_type?: string
+}): Promise<DashboardStats> {
+  const res = await client.get<ApiResponse<DashboardStats>>('/admin/dashboard', { params })
   return res.data.data
 }
 

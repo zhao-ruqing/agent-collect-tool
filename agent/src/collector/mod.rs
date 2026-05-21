@@ -1,4 +1,5 @@
 pub mod claude;
+pub mod trae;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -32,9 +33,10 @@ pub trait Collector: Send + Sync {
 // ============================================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum ToolType {
+    #[serde(rename = "claude-code")]
     ClaudeCode,
+    #[serde(rename = "trae")]
     Trae,
 }
 
@@ -197,10 +199,12 @@ pub struct SessionRecord {
     pub started_at: DateTime<Utc>,
     /// 会话结束时间
     pub ended_at: Option<DateTime<Utc>>,
-    /// Claude Code 版本
+    /// 工具版本
     pub version: Option<String>,
     /// 会话状态：active / completed / abandoned
     pub status: SessionStatus,
+    /// AI 工具类型（claude-code / trae）
+    pub tool: ToolType,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
