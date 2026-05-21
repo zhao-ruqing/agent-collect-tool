@@ -313,18 +313,19 @@ mod tests {
         let mut f = std::fs::File::create(&tmp).unwrap();
         writeln!(
             f,
-            r#"{{"type":"message","role":"user","content":"Hello","model":"claude-sonnet-4-6","tokens":{{"input":0,"output":0}},"timestamp":"2024-01-01T10:00:00.000Z","seq":1}}"#
+            r#"{{"type":"user","message":{{"role":"user","content":"Hello","model":"claude-sonnet-4-6","usage":{{"input_tokens":0,"output_tokens":0}}}}}}"#
         ).unwrap();
         writeln!(
             f,
-            r#"{{"type":"message","role":"assistant","content":"Hi!","model":"claude-sonnet-4-6","tokens":{{"input":10,"output":5}},"timestamp":"2024-01-01T10:00:01.000Z","seq":2}}"#
+            r#"{{"type":"assistant","message":{{"role":"assistant","content":"Hi!","model":"claude-sonnet-4-6","usage":{{"input_tokens":10,"output_tokens":5}}}}}}"#
         ).unwrap();
 
         let mut parser = ConversationParser::new(tmp.clone());
         let events = parser.parse_incremental().unwrap();
         assert_eq!(events.len(), 2);
-        assert_eq!(events[0].role.as_deref(), Some("user"));
-        assert_eq!(events[1].role.as_deref(), Some("assistant"));
+        // 新格式：role 在 message 对象内
+        assert_eq!(events[0].message.as_ref().and_then(|m| m.role.as_deref()), Some("user"));
+        assert_eq!(events[1].message.as_ref().and_then(|m| m.role.as_deref()), Some("assistant"));
 
         // 增量无新数据
         let events = parser.parse_incremental().unwrap();
@@ -334,22 +335,22 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_file_edit() {
-        let tmp = std::env::temp_dir().join("test_edit.jsonl");
+    fn test_parse_tool_use_result() {
+        let tmp = std::env::temp_dir().join("test_tool_use.jsonl");
         let mut f = std::fs::File::create(&tmp).unwrap();
         writeln!(
             f,
-            r#"{{"type":"code_edit","file_edit":{{"path":"src/main.rs","edit_type":"modify","lines_added":5,"lines_removed":2,"diff":"- old\\n+ new"}},"timestamp":"2024-01-01T10:00:00.000Z"}}"#
+            r#"{{"type":"user","message":{{"role":"user","content":"create a file"}},"toolUseResult":{{"type":"create","filePath":"src/main.rs","content":"fn main() {{}}"}},"timestamp":"2024-01-01T10:00:00.000Z"}}"#
         ).unwrap();
 
         let mut parser = ConversationParser::new(tmp.clone());
         let events = parser.parse_incremental().unwrap();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_type.as_deref(), Some("code_edit"));
+        assert_eq!(&events[0].event_type, "user");
 
-        let edit = events[0].file_edit.as_ref().unwrap();
-        assert_eq!(edit.path.as_deref(), Some("src/main.rs"));
-        assert_eq!(edit.lines_added, Some(5));
+        let tool = events[0].tool_use_result.as_ref().unwrap();
+        assert_eq!(tool.result_type.as_deref(), Some("create"));
+        assert_eq!(tool.file_path.as_deref(), Some("src/main.rs"));
 
         std::fs::remove_file(&tmp).ok();
     }

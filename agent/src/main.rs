@@ -6,6 +6,7 @@ mod service;
 mod util;
 
 use std::env;
+use std::panic;
 use std::process::Command;
 use anyhow::{Context, Result};
 use crate::config::AgentConfig;
@@ -15,6 +16,24 @@ use crate::reporter::http::{HttpReporter, HttpReporterConfig};
 const SERVICE_NAME: &str = "AgentCollectTool";
 
 fn main() -> Result<()> {
+    // 全局 panic hook：记录崩溃信息后自动重启（仅服务模式）
+    panic::set_hook(Box::new(|info| {
+        let msg = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "未知 panic".to_string()
+        };
+        let loc = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_else(|| "未知位置".to_string());
+        log::error!("!!! PANIC: {} (位置: {})", msg, loc);
+        // 将 panic 信息写入 stderr 作为最后手段
+        eprintln!("!!! PANIC: {} (位置: {})", msg, loc);
+    }));
+
     let args: Vec<String> = env::args().collect();
 
     // 无参数或由 SCM 启动时，作为 Windows 服务运行
@@ -182,14 +201,15 @@ async fn run_foreground() -> Result<()> {
     log::info!("Agent 前台模式启动...");
 
     let config = AgentConfig::load()?;
-    log::info!("配置加载成功: {:?}", config);
+    log::info!("配置加载成功，exe 目录: {:?}", std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())));
 
-    // 创建 HTTP 上报器
+    // 创建 HTTP 上报器（带 HMAC 签名密钥）
     let http_reporter = HttpReporter::new(HttpReporterConfig {
         server_url: config.server_url.clone(),
         agent_id: config.agent_id.clone(),
         agent_version: env!("CARGO_PKG_VERSION").to_string(),
         timeout_secs: 30,
+        api_secret: config.api_secret.clone(),
     })?;
 
     // 创建引擎
@@ -214,9 +234,22 @@ async fn run_foreground() -> Result<()> {
         engine.register_collector(Box::new(claude_collector));
     }
 
-    // 运行主循环
     log::info!("开始采集主循环...");
-    engine.run().await?;
+
+    // Ctrl+C 优雅关闭
+    tokio::select! {
+        result = engine.run() => {
+            if let Err(e) = result {
+                log::error!("引擎运行出错: {}", e);
+            }
+        }
+        _ = tokio::signal::ctrl_c() => {
+            log::info!("收到 Ctrl+C，正在优雅关闭...");
+            if let Err(e) = engine.shutdown().await {
+                log::error!("引擎关闭出错: {}", e);
+            }
+        }
+    }
 
     Ok(())
 }

@@ -1,12 +1,16 @@
-// HTTP 上报器：批量压缩上报到后端，支持指数退避重试
+// HTTP 上报器：批量压缩上报到后端，HMAC 签名 + 指数退避重试
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::json;
+use sha2::Sha256;
+use hmac::{Hmac, Mac};
 use std::time::Duration;
 
 use crate::collector::RawEvent;
 use super::Reporter;
+
+type HmacSha256 = Hmac<Sha256>;
 
 /// HTTP 上报器配置
 #[derive(Debug, Clone)]
@@ -15,6 +19,7 @@ pub struct HttpReporterConfig {
     pub agent_id: String,
     pub agent_version: String,
     pub timeout_secs: u64,
+    pub api_secret: String,
 }
 
 /// HTTP 上报器
@@ -32,6 +37,17 @@ impl HttpReporter {
             .with_context(|| "创建 HTTP Client 失败")?;
 
         Ok(Self { client, config })
+    }
+
+    /// 计算请求体的 HMAC-SHA256 签名
+    fn sign_body(&self, body: &[u8]) -> String {
+        if self.config.api_secret.is_empty() {
+            return String::new();
+        }
+        let mut mac = HmacSha256::new_from_slice(self.config.api_secret.as_bytes())
+            .expect("HMAC key 创建失败");
+        mac.update(body);
+        hex::encode(mac.finalize().into_bytes())
     }
 }
 
@@ -57,10 +73,21 @@ impl Reporter for HttpReporter {
             let json_body = serde_json::to_vec(&payload)
                 .with_context(|| "序列化上报数据失败")?;
 
-            let response = self.client
+            // 计算 HMAC 签名（未压缩 JSON）
+            let signature = self.sign_body(&json_body);
+
+            let mut request = self.client
                 .post(&url)
                 .header("Content-Type", "application/json")
                 .header("Content-Encoding", "gzip")
+                .header("X-Agent-Id", &self.config.agent_id);
+
+            // 如果配置了密钥，添加签名头
+            if !signature.is_empty() {
+                request = request.header("X-Agent-Signature", &signature);
+            }
+
+            let response = request
                 .body(gzip_compress(&json_body)?)
                 .send()
                 .await;
@@ -80,6 +107,10 @@ impl Reporter for HttpReporter {
                         log::warn!("被限流 (429)，{} 秒后重试", retry_after);
                         tokio::time::sleep(Duration::from_secs(retry_after)).await;
                         continue;
+                    } else if status.as_u16() == 401 {
+                        let body = resp.text().await.unwrap_or_default();
+                        log::error!("签名验证失败 (401): {}, 不重试", body);
+                        return Err(anyhow::anyhow!("签名验证失败: {}", body));
                     } else if status.is_client_error() {
                         let body = resp.text().await.unwrap_or_default();
                         log::error!("上报被拒绝 ({}): {}, 不重试", status, body);

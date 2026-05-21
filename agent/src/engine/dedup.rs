@@ -95,7 +95,7 @@ fn current_timestamp_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collector::{ConversationRecord, MessageRecord, SessionStatus};
+    use crate::collector::{ConversationRecord, MessageRecord};
     use chrono::Utc;
 
     #[test]

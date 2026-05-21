@@ -7,6 +7,7 @@ pub struct BackendConfig {
     pub port: u16,
     pub salt: String,
     pub jwt_secret: String,
+    pub agent_api_secret: String,
 }
 
 impl BackendConfig {
@@ -21,6 +22,8 @@ impl BackendConfig {
                 .expect("PORT must be a number"),
             salt: env::var("SALT").unwrap_or_else(|_| "default_salt".to_string()),
             jwt_secret: env::var("JWT_SECRET").expect("JWT_SECRET must be set"),
+            agent_api_secret: env::var("AGENT_API_SECRET")
+                .unwrap_or_else(|_| String::new()),
         })
     }
 }

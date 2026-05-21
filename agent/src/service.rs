@@ -1,4 +1,4 @@
-// Windows 服务管理：注册/启动/停止/运行
+// Windows 服务管理：注册/启动/停止/运行，含崩溃自动重启
 use std::ffi::OsString;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -13,6 +13,10 @@ use windows_service::{
 };
 
 const SERVICE_NAME: &str = "AgentCollectTool";
+/// 崩溃后重启等待秒数
+const RESTART_DELAY_SECS: u64 = 5;
+/// 最大连续重启次数（防止无限重启循环）
+const MAX_RESTART_COUNT: u32 = 5;
 
 define_windows_service!(ffi_service_main, system_service_main);
 
@@ -23,11 +27,37 @@ pub fn run_service() -> Result<(), windows_service::Error> {
 
 /// 服务入口点
 fn system_service_main(_arguments: Vec<OsString>) {
-    // 初始化日志
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
 
-    if let Err(e) = run_app() {
-        log::error!("服务运行失败: {}", e);
+    // 崩溃重启循环
+    let mut restart_count = 0u32;
+    loop {
+        match run_app() {
+            Ok(()) => {
+                log::info!("服务正常退出");
+                break;
+            }
+            Err(e) => {
+                restart_count += 1;
+                log::error!(
+                    "服务异常退出 (第 {} 次): {}",
+                    restart_count,
+                    e
+                );
+                if restart_count >= MAX_RESTART_COUNT {
+                    log::error!(
+                        "连续崩溃 {} 次，停止重启",
+                        restart_count
+                    );
+                    break;
+                }
+                log::info!(
+                    "{} 秒后尝试重启...",
+                    RESTART_DELAY_SECS
+                );
+                std::thread::sleep(Duration::from_secs(RESTART_DELAY_SECS));
+            }
+        }
     }
 }
 
@@ -68,15 +98,16 @@ fn run_app() -> Result<(), anyhow::Error> {
     rt.block_on(async {
         // 加载配置
         let config = crate::config::AgentConfig::load()?;
-        log::info!("服务模式启动，配置: {:?}", config);
+        log::info!("服务模式启动，exe 目录: {:?}", std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())));
 
-        // 创建 HTTP 上报器
+        // 创建 HTTP 上报器（带 HMAC 签名密钥）
         let http_reporter = crate::reporter::http::HttpReporter::new(
             crate::reporter::http::HttpReporterConfig {
                 server_url: config.server_url.clone(),
                 agent_id: config.agent_id.clone(),
                 agent_version: env!("CARGO_PKG_VERSION").to_string(),
                 timeout_secs: 30,
+                api_secret: config.api_secret.clone(),
             },
         )?;
 

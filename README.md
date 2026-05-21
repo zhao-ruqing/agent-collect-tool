@@ -1,6 +1,7 @@
 # Agent Collect Tool
 
 > AI 编程工具元信息静默收集系统：Rust Agent（Windows Service）→ Rust Axum 后端 → MySQL → Vue3 管理后台
+> 支持**员工自查个人AI使用数据**、**管理员全局管控全员使用数据**，双角色权限隔离，静默无感采集
 
 ---
 
@@ -33,21 +34,43 @@
 Rust Agent (Windows Service)
   ├─ 增量解析 Claude Code JSONL 日志
   ├─ 去重 → 聚合 → sled 本地缓冲
-  └─ HTTP 批量上报 (gzip)
+  └─ HTTP 批量上报 (gzip) 自动携带设备身份信息
         │
         ▼
 Rust Axum 后端
-  ├─ 数据校验 + 限流
+  ├─ 数据校验 + 限流 + 身份绑定
   ├─ 脱敏（路径/diff/内容）
-  └─ MySQL 存储
+  ├─ 角色权限鉴权分发
+  └─ MySQL 分层存储人员使用数据
         │
         ▼
-Vue3 管理后台
-  ├─ 仪表盘（趋势图/占比图）
-  ├─ 对话记录查询
-  ├─ 代码编辑浏览
-  └─ 行为事件分析
+Vue3 权限分离管理后台
+  ├─ 员工端：仅查看个人AI使用统计、对话记录、代码操作数据
+  └─ 管理员端：查看全员数据、部门统计、排行分析、设备管理、数据导出
 ```
+
+---
+
+## 用户角色与权限体系
+
+### 1. 普通员工
+
+- 自主登录后台，仅展示**本人**所有AI编程工具使用数据
+- 支持查看个人使用趋势、Token消耗、代码修改行为、会话记录
+- 可自主修改个人昵称、绑定所属部门，无任何他人数据查看权限
+
+### 2. 系统管理员
+
+- 拥有全平台最高查看与管理权限
+- 查看全体员工AI使用明细、批量数据统计、部门维度报表
+- 人员信息编辑、设备解绑、数据风控预警、使用行为管控
+- 支持全局数据筛选、排序、导出归档
+
+### 身份识别方案
+
+1. Agent 客户端自动读取**Windows系统登录账号+设备MAC唯一标识**完成自动绑定
+2. 管理员后台批量录入真实姓名、工号、部门，完成账号实名映射
+3. 无需员工手动填写信息，静默安装无感绑定身份
 
 ---
 
@@ -70,10 +93,10 @@ Vue3 管理后台
 # 后端
 cd backend && sqlx migrate run && cargo run
 
-# 管理后台
+# 管理后台(员工端+管理端同系统，登录区分权限)
 cd admin-ui && npm install && npm run dev
 
-# Agent（编译 + 安装为 Windows 服务）
+# Agent（编译 + 安装为 Windows 系统服务，静默后台运行）
 cd agent && cargo build --release
 agent.exe install && agent.exe start
 ```
@@ -85,11 +108,21 @@ agent.exe install && agent.exe start
 ```
 agent-collect-tool/
 ├── README.md
-├── agent/                    # Rust Agent（Windows 服务）
-├── backend/                  # Rust Axum 后端
-├── admin-ui/                 # Vue3 管理后台
+├── agent/                    # Rust Agent 客户端（Windows 静默服务）
+├── backend/                  # Rust Axum 权限后端、数据接收、鉴权逻辑
+├── admin-ui/                 # Vue3 管理后台（员工自查+管理员管控合一）
 └── docs/
     ├── DEVELOPMENT-PLAN.md
     ├── AI-DEVELOPMENT-STANDARDS.md
     └── AI-Development-Progress/
 ```
+
+---
+
+## 核心特色
+
+1. **无感部署**：客户端打包为Windows系统服务，开机自启，后台静默运行，无界面无打扰
+2. **权限隔离**：严格区分员工/管理员视图，数据权限隔离，保障隐私与管理需求
+3. **本地缓冲**：断网自动缓存采集数据，联网批量补发，不丢失使用记录
+4. **数据脱敏**：自动脱敏项目绝对路径、核心代码内容，只保留行为统计信息
+5. **低资源占用**：Rust 编写客户端与服务端，内存占用极低，不影响开发工作
