@@ -230,7 +230,8 @@ async fn run_foreground() -> Result<()> {
     // 注册 Claude Code 采集器
     if config.tools.iter().any(|t| t == "claude-code" || t == "claude") {
         use crate::collector::claude::ClaudeCodeCollector;
-        let claude_collector = ClaudeCodeCollector::from_config(config.claude_history_path.clone())?;
+        let claude_cursor_path = std::path::PathBuf::from(&config.data_dir).join("claude_cursor.json");
+        let claude_collector = ClaudeCodeCollector::from_config(config.claude_history_path.clone(), Some(claude_cursor_path))?;
         engine.register_collector(Box::new(claude_collector));
     }
 
@@ -239,10 +240,11 @@ async fn run_foreground() -> Result<()> {
         use crate::collector::trae::TraeCollector;
         use crate::collector::Collector;
         use std::path::PathBuf;
+        let trae_cursor_path = std::path::PathBuf::from(&config.data_dir).join("trae_cursor.json");
         let trae_collector = if let Some(ref dir) = config.trae_data_dir {
-            TraeCollector::new(PathBuf::from(dir))
+            TraeCollector::new(PathBuf::from(dir), Some(trae_cursor_path))
         } else {
-            TraeCollector::new_with_default_path()?
+            TraeCollector::new_with_default_path(Some(trae_cursor_path))?
         };
         if trae_collector.is_installed() {
             engine.register_collector(Box::new(trae_collector));

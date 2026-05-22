@@ -132,7 +132,8 @@ fn run_app() -> Result<(), anyhow::Error> {
         // 注册采集器
         use crate::collector::claude::ClaudeCodeCollector;
         if config.tools.iter().any(|t| t == "claude-code" || t == "claude") {
-            match ClaudeCodeCollector::from_config(config.claude_history_path.clone()) {
+            let claude_cursor_path = std::path::PathBuf::from(&config.data_dir).join("claude_cursor.json");
+            match ClaudeCodeCollector::from_config(config.claude_history_path.clone(), Some(claude_cursor_path)) {
                 Ok(claude_collector) => {
                     engine.register_collector(Box::new(claude_collector));
                 }

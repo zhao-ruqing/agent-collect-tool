@@ -1,0 +1,29 @@
+# Agent Configuration
+
+# Backend server URL
+server_url = "http://localhost:3000"
+
+# Unique ID for this agent (auto-generated if empty)
+agent_id = "agent-001"
+
+# API 签名密钥（与后端 AGENT_API_SECRET 一致）
+api_secret = "agent-collect-tool-shared-secret-2026"
+
+# Intervals in seconds
+collect_interval_secs = 10
+report_interval_secs = 10
+
+# Log level: trace, debug, info, warn, error
+log_level = "info"
+
+# Local data storage directory
+data_dir = "./data"
+
+# Tools to collect data from: claude-code, trae
+tools = ["claude-code", "trae"]
+
+# Claude 数据目录（默认 ~/.claude/）
+# claude_history_path = "C:/Users/35291/.claude/history.jsonl"
+
+# Trae 用户数据目录（默认 %APPDATA%/Trae/User）
+# trae_data_dir = "C:/Users/35291/AppData/Roaming/Trae/User"

@@ -340,7 +340,7 @@ pub async fn get_conversation_detail(
     .await?;
 
     let messages: Vec<Message> = sqlx::query_as(
-        "SELECT * FROM messages WHERE session_id = ? AND role IN ('user', 'assistant') AND content IS NOT NULL AND content != '' ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        "SELECT * FROM messages WHERE session_id = ? AND role IN ('user', 'assistant') AND content IS NOT NULL AND content != '' ORDER BY created_at ASC LIMIT ? OFFSET ?",
     )
     .bind(session_id)
     .bind(params.limit())

@@ -3,7 +3,8 @@
 //! 从 Trae 的 workspaceStorage (state.vscdb) 和 Git 快照中
 //! 增量提取 AI 对话数据，标准化为 RawEvent。
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 use super::{
@@ -26,9 +27,11 @@ pub struct TraeCollector {
     snapshot_base: std::path::PathBuf,
     /// 采集游标
     cursor: TraeCursor,
+    /// 游标持久化文件路径
+    cursor_path: Option<std::path::PathBuf>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 struct TraeCursor {
     /// 工作区游标：workspace_hash → vscdb 最后修改时间（秒级时间戳）
     workspace_mtimes: HashMap<String, u64>,
@@ -38,7 +41,7 @@ struct TraeCursor {
 
 impl TraeCollector {
     /// 使用自定义 Trae 用户数据目录创建采集器
-    pub fn new(trae_user_dir: std::path::PathBuf) -> Self {
+    pub fn new(trae_user_dir: std::path::PathBuf, cursor_path: Option<std::path::PathBuf>) -> Self {
         let snapshot_base = trae_user_dir
             .parent()
             .map(|p| {
@@ -48,15 +51,21 @@ impl TraeCollector {
             })
             .unwrap_or_default();
 
+        let cursor = cursor_path
+            .as_ref()
+            .and_then(|p| load_cursor(p))
+            .unwrap_or_default();
+
         Self {
             trae_user_dir,
             snapshot_base,
-            cursor: TraeCursor::default(),
+            cursor,
+            cursor_path,
         }
     }
 
     /// 使用默认 Trae 数据目录创建采集器
-    pub fn new_with_default_path() -> Result<Self> {
+    pub fn new_with_default_path(cursor_path: Option<std::path::PathBuf>) -> Result<Self> {
         let data_dir = dirs::data_dir()
             .ok_or_else(|| anyhow::anyhow!("无法获取 APPDATA 目录"))?;
 
@@ -67,10 +76,16 @@ impl TraeCollector {
             .join("ai-agent")
             .join("snapshot");
 
+        let cursor = cursor_path
+            .as_ref()
+            .and_then(|p| load_cursor(p))
+            .unwrap_or_default();
+
         Ok(Self {
             trae_user_dir,
             snapshot_base,
-            cursor: TraeCursor::default(),
+            cursor,
+            cursor_path,
         })
     }
 
@@ -358,6 +373,13 @@ impl Collector for TraeCollector {
             self.update_cursor(ws);
         }
 
+        // 持久化游标，避免重启后全量重采
+        if let Some(ref path) = self.cursor_path {
+            if let Err(e) = save_cursor(path, &self.cursor) {
+                log::warn!("保存 Trae 游标失败: {}", e);
+            }
+        }
+
         Ok(events)
     }
 
@@ -437,6 +459,19 @@ fn ms_to_datetime(ts: i64) -> DateTime<Utc> {
 /// 检查目录是否为 Git 仓库
 fn is_git_repo(path: &std::path::Path) -> bool {
     path.exists() && (path.join(".git").exists() || path.join("HEAD").exists())
+}
+
+/// 从磁盘加载游标
+fn load_cursor(path: &std::path::Path) -> Option<TraeCursor> {
+    let data = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&data).ok()
+}
+
+/// 持久化游标到磁盘
+fn save_cursor(path: &std::path::Path, cursor: &TraeCursor) -> Result<()> {
+    let data = serde_json::to_vec(cursor).with_context(|| "序列化 Trae 游标失败")?;
+    std::fs::write(path, &data).with_context(|| "写入 Trae 游标文件失败")?;
+    Ok(())
 }
 
 #[cfg(test)]

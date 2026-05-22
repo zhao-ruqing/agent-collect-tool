@@ -14,9 +14,9 @@ pub struct SessionMeta {
     /// 工作目录
     #[serde(default)]
     pub cwd: Option<String>,
-    /// 会话开始时间
-    #[serde(rename = "startedAt")]
-    pub started_at: Option<String>,
+    /// 会话开始时间（字符串 ISO 8601 或数字毫秒时间戳）
+    #[serde(rename = "startedAt", default)]
+    pub started_at: Option<serde_json::Value>,
     /// Claude Code 版本
     #[serde(default)]
     pub version: Option<String>,
@@ -26,12 +26,23 @@ pub struct SessionMeta {
 }
 
 impl SessionMeta {
-    /// 解析开始时间
+    /// 解析开始时间，支持两种格式:
+    /// - 字符串: ISO 8601 (如 "2024-01-01T10:00:00.000Z")
+    /// - 数字:   毫秒时间戳 (如 1779414618547)
     pub fn parsed_started_at(&self) -> Option<DateTime<Utc>> {
-        self.started_at
-            .as_deref()
-            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.with_timezone(&Utc))
+        match &self.started_at {
+            Some(serde_json::Value::String(s)) => {
+                DateTime::parse_from_rfc3339(s)
+                    .ok()
+                    .map(|dt| dt.with_timezone(&Utc))
+            }
+            Some(serde_json::Value::Number(n)) => {
+                n.as_i64().and_then(|ms| {
+                    chrono::TimeZone::timestamp_millis_opt(&Utc, ms).single()
+                })
+            }
+            _ => None,
+        }
     }
 }
 

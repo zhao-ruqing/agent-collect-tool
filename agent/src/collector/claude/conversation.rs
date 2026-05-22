@@ -40,8 +40,9 @@ pub struct ConversationEvent {
     pub message: Option<MessageBlock>,
 
     /// 文件操作结果（工具调用结果中的 create / update / delete）
+    /// 注意：工具执行失败时此字段为错误字符串而非对象，用 Value 接收避免整行丢弃
     #[serde(default, rename = "toolUseResult")]
-    pub tool_use_result: Option<ToolUseResult>,
+    pub tool_use_result: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -138,17 +139,7 @@ fn is_noise_block(block: &serde_json::Value) -> bool {
 fn extract_content_text(content: &serde_json::Value) -> String {
     match content {
         serde_json::Value::String(s) => {
-            // 字符串可能是序列化后的 JSON 工具结果数组，尝试检测并过滤
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(s) {
-                if parsed.is_array() {
-                    return extract_content_text(&parsed);
-                }
-            }
-            // 如果是纯工具结果 JSON 字符串（以 [{" 开头），视为噪音
-            let trimmed = s.trim();
-            if trimmed.starts_with("[{") && (trimmed.contains("\"tool_use_id\"") || trimmed.contains("\"type\":\"tool_result\"") || trimmed.contains("\"type\":\"tool_use\"")) {
-                return String::new();
-            }
+            // 字符串类型的 content 永远是用户原始输入，直接返回
             s.clone()
         }
         serde_json::Value::Array(arr) => {
@@ -372,7 +363,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(&events[0].event_type, "user");
 
-        let tool = events[0].tool_use_result.as_ref().unwrap();
+        let tool: ToolUseResult = serde_json::from_value(events[0].tool_use_result.clone().unwrap()).unwrap();
         assert_eq!(tool.result_type.as_deref(), Some("create"));
         assert_eq!(tool.file_path.as_deref(), Some("src/main.rs"));
 

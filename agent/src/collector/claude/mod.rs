@@ -2,7 +2,8 @@ pub mod conversation;
 pub mod history;
 pub mod session;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -24,41 +25,49 @@ pub struct ClaudeCodeCollector {
     claude_home: PathBuf,
     /// 采集游标：记录各文件的已读位置
     cursor: ClaudeCursor,
+    /// 游标持久化文件路径
+    cursor_path: Option<PathBuf>,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 struct ClaudeCursor {
     history_offset: u64,
     session_cursors: HashMap<String, u64>,
 }
 
 impl ClaudeCodeCollector {
-    pub fn new(claude_home: PathBuf) -> Self {
+    pub fn new(claude_home: PathBuf, cursor_path: Option<PathBuf>) -> Self {
+        let cursor = cursor_path
+            .as_ref()
+            .and_then(|p| load_cursor(p))
+            .unwrap_or_default();
+
         Self {
             claude_home,
-            cursor: ClaudeCursor::default(),
+            cursor,
+            cursor_path,
         }
     }
 
-    pub fn new_with_default_path() -> Result<Self> {
+    pub fn new_with_default_path(cursor_path: Option<PathBuf>) -> Result<Self> {
         let home = dirs::home_dir()
             .ok_or_else(|| anyhow::anyhow!("无法获取 HOME 目录"))?
             .join(".claude");
-        Ok(Self::new(home))
+        Ok(Self::new(home, cursor_path))
     }
 
     /// 根据配置创建采集器
     /// history_path_override: 可选的自定义历史文件路径
-    pub fn from_config(history_path_override: Option<String>) -> Result<Self> {
+    pub fn from_config(history_path_override: Option<String>, cursor_path: Option<PathBuf>) -> Result<Self> {
         if let Some(ref path) = history_path_override {
             let p = PathBuf::from(path);
             if let Some(parent) = p.parent() {
-                Ok(Self::new(parent.to_path_buf()))
+                Ok(Self::new(parent.to_path_buf(), cursor_path))
             } else {
-                Ok(Self::new(p.clone()))
+                Ok(Self::new(p.clone(), cursor_path))
             }
         } else {
-            Self::new_with_default_path()
+            Self::new_with_default_path(cursor_path)
         }
     }
 
@@ -160,6 +169,13 @@ impl Collector for ClaudeCodeCollector {
             }
         }
 
+        // 持久化游标，避免重启后全量重采
+        if let Some(ref path) = self.cursor_path {
+            if let Err(e) = save_cursor(path, &self.cursor) {
+                log::warn!("保存 Claude 游标失败: {}", e);
+            }
+        }
+
         Ok(events)
     }
 
@@ -194,20 +210,7 @@ fn aggregate_conversation_events(session_id: &str, events: &[ConversationEvent])
                     continue;
                 };
 
-                // 检查消息内容是否全是工具交互块（tool_use/tool_result），是则整条跳过
-                if msg_block.content.is_array() {
-                    let arr = msg_block.content.as_array().unwrap();
-                    if !arr.is_empty() && arr.iter().all(|b| {
-                        matches!(
-                            b.get("type").and_then(|v| v.as_str()),
-                            Some("tool_use") | Some("tool_result")
-                        )
-                    }) {
-                        continue;
-                    }
-                }
-
-                // 跳过空内容消息（所有角色），纯工具调用的消息无实际对话文本
+                // 跳过空内容消息（所有角色），extract_content_text 已过滤纯工具/思考块
                 let content_text = event.content_text();
                 if content_text.is_empty() {
                     continue;
@@ -226,40 +229,43 @@ fn aggregate_conversation_events(session_id: &str, events: &[ConversationEvent])
                 messages.push(msg);
 
                 // 同时检查是否有文件操作（user 消息中嵌套 toolUseResult）
-                if let Some(ref tool_result) = event.tool_use_result {
-                    let edit_type = match tool_result.result_type.as_deref() {
-                        Some("create") => EditType::Create,
-                        Some("delete") => EditType::Delete,
-                        Some("update") | Some("file_unchanged") => EditType::Modify,
-                        _ => continue,
-                    };
+                // toolUseResult 可能是结构化对象或错误字符串，非对象时直接跳过
+                if let Some(ref tool_result_value) = event.tool_use_result {
+                    if let Ok(tool_result) = serde_json::from_value::<conversation::ToolUseResult>(tool_result_value.clone()) {
+                        let edit_type = match tool_result.result_type.as_deref() {
+                            Some("create") => EditType::Create,
+                            Some("delete") => EditType::Delete,
+                            Some("update") | Some("file_unchanged") => EditType::Modify,
+                            _ => continue,
+                        };
 
-                    let (lines_added, lines_removed, diff_content) = if let Some(ref patches) = tool_result.structured_patch {
-                        let added: i32 = patches.iter()
-                            .filter_map(|p| p.lines.as_ref().map(|l| l.iter().filter(|line| line.starts_with('+')).count() as i32))
-                            .sum();
-                        let removed: i32 = patches.iter()
-                            .filter_map(|p| p.lines.as_ref().map(|l| l.iter().filter(|line| line.starts_with('-')).count() as i32))
-                            .sum();
-                        let diff = patches.iter()
-                            .filter_map(|p| p.lines.as_ref().map(|l| l.join("\n")))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        (Some(added), Some(removed), if diff.is_empty() { None } else { Some(diff) })
-                    } else {
-                        (None, None, None)
-                    };
+                        let (lines_added, lines_removed, diff_content) = if let Some(ref patches) = tool_result.structured_patch {
+                            let added: i32 = patches.iter()
+                                .filter_map(|p| p.lines.as_ref().map(|l| l.iter().filter(|line| line.starts_with('+')).count() as i32))
+                                .sum();
+                            let removed: i32 = patches.iter()
+                                .filter_map(|p| p.lines.as_ref().map(|l| l.iter().filter(|line| line.starts_with('-')).count() as i32))
+                                .sum();
+                            let diff = patches.iter()
+                                .filter_map(|p| p.lines.as_ref().map(|l| l.join("\n")))
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            (Some(added), Some(removed), if diff.is_empty() { None } else { Some(diff) })
+                        } else {
+                            (None, None, None)
+                        };
 
-                    let code_edit = CodeEditRecord {
-                        session_id: session_id.to_string(),
-                        file_path: tool_result.file_path.clone().unwrap_or_default(),
-                        edit_type,
-                        lines_added,
-                        lines_removed,
-                        diff_content,
-                        timestamp: event.parsed_timestamp().unwrap_or_default(),
-                    };
-                    result.push(RawEvent::CodeEdit(code_edit));
+                        let code_edit = CodeEditRecord {
+                            session_id: session_id.to_string(),
+                            file_path: tool_result.file_path.clone().unwrap_or_default(),
+                            edit_type,
+                            lines_added,
+                            lines_removed,
+                            diff_content,
+                            timestamp: event.parsed_timestamp().unwrap_or_default(),
+                        };
+                        result.push(RawEvent::CodeEdit(code_edit));
+                    }
                 }
             }
 
@@ -290,4 +296,17 @@ fn aggregate_conversation_events(session_id: &str, events: &[ConversationEvent])
     }
 
     result
+}
+
+/// 从磁盘加载游标
+fn load_cursor(path: &std::path::Path) -> Option<ClaudeCursor> {
+    let data = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&data).ok()
+}
+
+/// 持久化游标到磁盘
+fn save_cursor(path: &std::path::Path, cursor: &ClaudeCursor) -> Result<()> {
+    let data = serde_json::to_vec(cursor).with_context(|| "序列化 Claude 游标失败")?;
+    std::fs::write(path, &data).with_context(|| "写入 Claude 游标文件失败")?;
+    Ok(())
 }
