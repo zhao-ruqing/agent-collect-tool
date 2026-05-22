@@ -1,4 +1,5 @@
 pub mod claude;
+pub mod cursor;
 pub mod trae;
 
 use anyhow::Result;
@@ -36,6 +37,8 @@ pub trait Collector: Send + Sync {
 pub enum ToolType {
     #[serde(rename = "claude-code")]
     ClaudeCode,
+    #[serde(rename = "cursor")]
+    Cursor,
     #[serde(rename = "trae")]
     Trae,
 }
@@ -44,6 +47,7 @@ impl ToolType {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "claude-code" | "claude" => Some(ToolType::ClaudeCode),
+            "cursor" => Some(ToolType::Cursor),
             "trae" => Some(ToolType::Trae),
             _ => None,
         }
@@ -54,6 +58,7 @@ impl std::fmt::Display for ToolType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ToolType::ClaudeCode => write!(f, "claude-code"),
+            ToolType::Cursor => write!(f, "cursor"),
             ToolType::Trae => write!(f, "trae"),
         }
     }

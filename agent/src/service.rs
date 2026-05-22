@@ -143,6 +143,49 @@ fn run_app() -> Result<(), anyhow::Error> {
             }
         }
 
+        // 注册 Trae 采集器
+        if config.tools.iter().any(|t| t == "trae") {
+            use crate::collector::trae::TraeCollector;
+            use crate::collector::Collector;
+            use std::path::PathBuf;
+            let trae_cursor_path = std::path::PathBuf::from(&config.data_dir).join("trae_cursor.json");
+            let trae_collector = if let Some(ref dir) = config.trae_data_dir {
+                TraeCollector::new(PathBuf::from(dir), Some(trae_cursor_path))
+            } else {
+                match TraeCollector::new_with_default_path(Some(trae_cursor_path)) {
+                    Ok(tc) => tc,
+                    Err(e) => {
+                        log::warn!("Trae 采集器初始化失败: {}", e);
+                        return Ok(());
+                    }
+                }
+            };
+            if trae_collector.is_installed() {
+                engine.register_collector(Box::new(trae_collector));
+            } else {
+                log::info!("Trae 未安装，跳过 Trae 采集器注册");
+            }
+        }
+
+        // 注册 Cursor 采集器
+        if config.tools.iter().any(|t| t == "cursor") {
+            use crate::collector::cursor::CursorCollector;
+            use crate::collector::Collector;
+            let cursor_cursor_path = std::path::PathBuf::from(&config.data_dir).join("cursor_cursor.json");
+            match CursorCollector::new_with_default_path(Some(cursor_cursor_path)) {
+                Ok(cursor_collector) => {
+                    if cursor_collector.is_installed() {
+                        engine.register_collector(Box::new(cursor_collector));
+                    } else {
+                        log::info!("Cursor 未安装，跳过 Cursor 采集器注册");
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Cursor 采集器初始化失败: {}", e);
+                }
+            }
+        }
+
         log::info!("引擎启动，开始采集主循环...");
 
         // 主循环：采集 + 等待关闭信号

@@ -12,6 +12,7 @@
             <el-select v-model="filters.toolType" placeholder="全部" clearable @change="loadData" style="width: 160px">
               <el-option label="全部" value="" />
               <el-option label="Claude Code" value="claude-code" />
+              <el-option label="Cursor" value="cursor" />
               <el-option label="Trae" value="trae" />
             </el-select>
           </div>

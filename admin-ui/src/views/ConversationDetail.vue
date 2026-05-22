@@ -33,7 +33,7 @@
           <div class="info-item">
             <span class="info-label">AI 工具</span>
             <span class="info-value">
-              <el-tag :type="detail.session.tool_type === 'claude-code' ? '' : 'warning'" size="small" effect="dark">
+              <el-tag :type="tagType(detail.session.tool_type)" size="small" effect="dark">
                 {{ toolLabel(detail.session.tool_type) }}
               </el-tag>
             </span>
@@ -175,8 +175,16 @@ function formatTime(iso: string): string {
 }
 function toolLabel(t: string | null | undefined): string {
   if (t === 'claude-code') return 'Claude'
+  if (t === 'cursor') return 'Cursor'
   if (t === 'trae') return 'Trae'
   return t || '—'
+}
+
+function tagType(t: string | null | undefined): string {
+  if (t === 'claude-code') return ''
+  if (t === 'cursor') return 'success'
+  if (t === 'trae') return 'warning'
+  return ''
 }
 
 async function loadFirstPage() {

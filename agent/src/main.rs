@@ -253,6 +253,25 @@ async fn run_foreground() -> Result<()> {
         }
     }
 
+    // 注册 Cursor 采集器
+    if config.tools.iter().any(|t| t == "cursor") {
+        use crate::collector::cursor::CursorCollector;
+        use crate::collector::Collector;
+        let cursor_cursor_path = std::path::PathBuf::from(&config.data_dir).join("cursor_cursor.json");
+        match CursorCollector::new_with_default_path(Some(cursor_cursor_path)) {
+            Ok(cursor_collector) => {
+                if cursor_collector.is_installed() {
+                    engine.register_collector(Box::new(cursor_collector));
+                } else {
+                    log::info!("Cursor 未安装，跳过 Cursor 采集器注册");
+                }
+            }
+            Err(e) => {
+                log::warn!("Cursor 采集器初始化失败: {}", e);
+            }
+        }
+    }
+
     log::info!("开始采集主循环...");
 
     // Ctrl+C 优雅关闭

@@ -11,6 +11,7 @@
       >
         <el-option label="全部工具" value="" />
         <el-option label="Claude Code" value="claude-code" />
+        <el-option label="Cursor" value="cursor" />
         <el-option label="Trae" value="trae" />
       </el-select>
     </div>
