@@ -11,7 +11,7 @@
 >
 > - [DEVELOPMENT-PLAN.md](docs/DEVELOPMENT-PLAN.md) — 渐进式开发计划（Phase 1~7）
 > - [AI-DEVELOPMENT-STANDARDS.md](docs/AI-DEVELOPMENT-STANDARDS.md) — 操作规范、代码风格、Git 工作流
-> - [AI-Development-Progress/](docs/AI-Development-Progress/) — 开发进度记录（每次提交后更新）
+> - [AI-Development-Progress/](docs/AI-Development-Progress/) — 开发进度记录（每次编辑代码后更新）
 > - 代码中所有注释均为中文（包括 Rust 代码）
 > - 日志仅供参考，具体开发进度必须查看代码,一切以代码为准
 
@@ -78,16 +78,16 @@ Vue3 权限分离管理后台
 
 对 **Claude Code CLI**、**Trae IDE** 和 **Cursor IDE** 进行静默元信息采集：
 
-| 数据类别 | Claude Code | Trae | Cursor | 说明 |
-|---------|:---:|:---:|:---:|------|
-| 对话统计（次数/模型/tokens） | ✓ | △ | △ | 从 metadata/composerData 推断模型信息 |
-| 用户输入内容 | ✓ | ✓ | ✓ | 从 transcript JSONL 提取 |
-| 助手回复内容 | ✓ | ✗ | ✓ | Cursor 本地留存完整对话，优势明显 |
-| 代码变更（diff skeleton） | ✓ | ✓ | △ | Cursor 仅有摘要统计（增删行数），无完整 diff |
-| 代码接受/拒绝行为 | ✓ | △ | ✗ | — |
-| 项目路径（脱敏） | ✓ | ✓ | ✓ | 从 workspace.json 获取 |
-| Git 分支 | ✓ | ✗ | ✗ | — |
-| 会话元信息（agent/模型） | ✓ | ✓ | ✓ | 从 composerData unifiedMode 获取 |
+| 数据类别                     | Claude Code | Trae | Cursor | 说明                                         |
+| ---------------------------- | :---------: | :--: | :----: | -------------------------------------------- |
+| 对话统计（次数/模型/tokens） |      ✓      |  △   |   △    | 从 metadata/composerData 推断模型信息        |
+| 用户输入内容                 |      ✓      |  ✓   |   ✓    | 从 transcript JSONL 提取                     |
+| 助手回复内容                 |      ✓      |  ✗   |   ✓    | Cursor 本地留存完整对话，优势明显            |
+| 代码变更（diff skeleton）    |      ✓      |  ✓   |   △    | Cursor 仅有摘要统计（增删行数），无完整 diff |
+| 代码接受/拒绝行为            |      ✓      |  △   |   ✗    | —                                            |
+| 项目路径（脱敏）             |      ✓      |  ✓   |   ✓    | 从 workspace.json 获取                       |
+| Git 分支                     |      ✓      |  ✗   |   ✗    | —                                            |
+| 会话元信息（agent/模型）     |      ✓      |  ✓   |   ✓    | 从 composerData unifiedMode 获取             |
 
 **Claude Code 数据源：** `~/.claude/history.jsonl` + `sessions/*.json` + `projects/<hash>/*.jsonl`  
 **Trae 数据源：** `%APPDATA%/Trae/User/workspaceStorage/<hash>/state.vscdb`（SQLite K-V 库）+ `ModularData/ai-agent/snapshot/<sessionId>/`（Git 快照）  

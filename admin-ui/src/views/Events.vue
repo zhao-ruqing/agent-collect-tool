@@ -1,25 +1,5 @@
 <template>
   <div class="page-view">
-    <!-- 筛选栏 -->
-    <div class="panel filter-panel">
-      <div class="panel-header">
-        <h3 class="panel-title">筛选条件</h3>
-      </div>
-      <div class="panel-body">
-        <div class="filter-row">
-          <div class="filter-item">
-            <label class="filter-label">AI 工具</label>
-            <el-select v-model="filters.toolType" placeholder="全部" clearable @change="loadData" style="width: 160px">
-              <el-option label="全部" value="" />
-              <el-option label="Claude Code" value="claude-code" />
-              <el-option label="Cursor" value="cursor" />
-              <el-option label="Trae" value="trae" />
-            </el-select>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <div class="panel">
       <div class="panel-header">
         <h3 class="panel-title">行为事件</h3>
@@ -70,12 +50,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, watch } from 'vue'
 import client from '../api/client'
+import { useFilterStore } from '../stores/filter'
 import type { ActionEventItem } from '../types'
 
+const filterStore = useFilterStore()
 const loading = ref(false)
-const filters = reactive({ toolType: '' })
 const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const tableData = ref<ActionEventItem[]>([])
 
@@ -90,7 +71,7 @@ async function loadData() {
   loading.value = true
   try {
     const params: Record<string, unknown> = { page: pagination.page, page_size: pagination.pageSize }
-    if (filters.toolType) params.tool_type = filters.toolType
+    if (filterStore.toolType) params.tool_type = filterStore.toolType
     const res = await client.get('/admin/events', { params })
     const payload = res.data?.data
     tableData.value = payload?.list || []
@@ -98,6 +79,8 @@ async function loadData() {
   } catch { tableData.value = []; pagination.total = 0 }
   finally { loading.value = false }
 }
+
+watch(() => filterStore.toolType, () => { pagination.page = 1; loadData() })
 
 onMounted(() => loadData())
 </script>

@@ -1,21 +1,5 @@
 <template>
   <div class="dashboard">
-    <!-- 工具筛选 -->
-    <div class="toolbar">
-      <el-select
-        v-model="toolType"
-        placeholder="AI 工具筛选"
-        clearable
-        @change="loadStats"
-        style="width: 180px"
-      >
-        <el-option label="全部工具" value="" />
-        <el-option label="Claude Code" value="claude-code" />
-        <el-option label="Cursor" value="cursor" />
-        <el-option label="Trae" value="trae" />
-      </el-select>
-    </div>
-
     <!-- 统计卡片 -->
     <div class="stat-grid">
       <div
@@ -117,11 +101,12 @@ import {
   Monitor,
 } from "@element-plus/icons-vue";
 import * as echarts from "echarts";
-import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { fetchDashboardStats } from "../api/dashboard";
+import { useFilterStore } from "../stores/filter";
 import type { DashboardStats } from "../types";
 
-const toolType = ref("");
+const filterStore = useFilterStore();
 const stats = ref<DashboardStats>({
   total_agents: 0,
   total_sessions: 0,
@@ -308,7 +293,7 @@ function resizeCharts() {
 async function loadStats() {
   try {
     const params: Record<string, string> = {};
-    if (toolType.value) params.tool_type = toolType.value;
+    if (filterStore.toolType) params.tool_type = filterStore.toolType;
     stats.value = await fetchDashboardStats(params);
   } catch {
     /* 使用默认值 */
@@ -318,6 +303,8 @@ async function loadStats() {
   initTrendChart();
   initOverviewChart();
 }
+
+watch(() => filterStore.toolType, () => loadStats());
 
 onMounted(async () => {
   await loadStats();
@@ -332,11 +319,6 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/* Toolbar */
-.toolbar {
-  margin-bottom: 16px;
-}
-
 /* ============================================================
    Stat Grid
    ============================================================ */

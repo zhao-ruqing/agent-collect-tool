@@ -57,6 +57,17 @@
           <div class="breadcrumb">
             <span class="breadcrumb-current">{{ currentPageTitle }}</span>
           </div>
+          <el-select
+            v-model="filterStore.toolType"
+            placeholder="AI 工具筛选"
+            clearable
+            style="width: 160px"
+          >
+            <el-option label="全部工具" value="" />
+            <el-option label="Claude Code" value="claude-code" />
+            <el-option label="Cursor" value="cursor" />
+            <el-option label="Trae" value="trae" />
+          </el-select>
         </div>
         <div class="topbar-right">
           <div class="status-dot" title="系统运行中"></div>
@@ -87,9 +98,11 @@ import {
   Fold,
   Expand,
 } from '@element-plus/icons-vue'
+import { useFilterStore } from '../stores/filter'
 
 const route = useRoute()
 const isCollapse = ref(false)
+const filterStore = useFilterStore()
 
 const menuItems = [
   { path: '/dashboard',     label: '仪表盘',     icon: Monitor },
@@ -305,6 +318,11 @@ function toggleSidebar() {
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   flex-shrink: 0;
+}
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
 .breadcrumb-current {
   font-size: 15px;

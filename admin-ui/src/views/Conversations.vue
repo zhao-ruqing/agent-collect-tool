@@ -7,15 +7,6 @@
       </div>
       <div class="panel-body">
         <div class="filter-row">
-          <div class="filter-item filter-item--tool">
-            <label class="filter-label">AI 工具</label>
-            <el-select v-model="filters.toolType" placeholder="全部" clearable @change="handleSearch">
-              <el-option label="全部" value="" />
-              <el-option label="Claude Code" value="claude-code" />
-              <el-option label="Cursor" value="cursor" />
-              <el-option label="Trae" value="trae" />
-            </el-select>
-          </div>
           <div class="filter-item filter-item--keyword">
             <label class="filter-label">搜索</label>
             <el-input
@@ -112,15 +103,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Search } from '@element-plus/icons-vue'
 import { fetchConversations } from '../api/conversations'
+import { useFilterStore } from '../stores/filter'
 import type { Session } from '../types'
 
 const router = useRouter()
+const filterStore = useFilterStore()
 const loading = ref(false)
-const filters = reactive({ dateRange: null as [string, string] | null, keyword: '', toolType: '' })
+const filters = reactive({ dateRange: null as [string, string] | null, keyword: '' })
 const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const tableData = ref<Session[]>([])
 
@@ -149,7 +142,7 @@ async function handleSearch() {
     const params: Record<string, unknown> = { page: pagination.page, page_size: pagination.pageSize }
     if (filters.dateRange) { params.date_from = filters.dateRange[0]; params.date_to = filters.dateRange[1] }
     if (filters.keyword) params.keyword = filters.keyword
-    if (filters.toolType) params.tool_type = filters.toolType
+    if (filterStore.toolType) params.tool_type = filterStore.toolType
     const res = await fetchConversations(params as any)
     tableData.value = res.list || []
     pagination.total = res.total || 0
@@ -162,9 +155,11 @@ function goDetail(sessionId: string) {
 }
 
 function handleReset() {
-  filters.dateRange = null; filters.keyword = ''; filters.toolType = ''; pagination.page = 1
+  filters.dateRange = null; filters.keyword = ''; pagination.page = 1
   handleSearch()
 }
+
+watch(() => filterStore.toolType, () => { pagination.page = 1; handleSearch() })
 
 onMounted(() => handleSearch())
 </script>
@@ -196,7 +191,6 @@ onMounted(() => handleSearch())
   display: block; font-size: 11px; color: var(--c-text-muted);
   text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;
 }
-.filter-item--tool { flex-shrink: 0; width: 150px; }
 .filter-item--keyword { flex: 1; min-width: 220px; }
 .filter-item--date { flex-shrink: 0; }
 .filter-item--actions { flex-shrink: 0; }
